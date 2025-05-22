@@ -468,7 +468,10 @@ Instance ID: 123456789</pre>
                 border: 1px solid #3C4043;
                 border-radius: 5px;
                 padding: 8px;
-                color: #E4E6EA;
+                color: #FFFFFF;
+            }
+            QLineEdit::placeholder {
+                color: #8696A0;
             }
             QPushButton {
                 background-color: #00D4AA;
@@ -484,15 +487,41 @@ Instance ID: 123456789</pre>
             QTabWidget::pane {
                 border: 1px solid #3C4043;
                 background-color: #202C33;
+                color: #FFFFFF;
             }
             QTabBar::tab {
                 background-color: #2A3942;
-                color: #E4E6EA;
+                color: #FFFFFF;
                 padding: 8px 16px;
                 margin-right: 2px;
             }
             QTabBar::tab:selected {
                 background-color: #00D4AA;
+                color: #FFFFFF;
+            }
+            QLabel {
+                color: #FFFFFF;
+            }
+            QFormLayout QLabel {
+                color: #FFFFFF;
+            }
+            QTextBrowser {
+                background-color: #2A3942;
+                color: #FFFFFF;
+                border: 1px solid #3C4043;
+                border-radius: 5px;
+            }
+            QCheckBox {
+                color: #FFFFFF;
+            }
+            QCheckBox::indicator {
+                background-color: #2A3942;
+                border: 1px solid #3C4043;
+                border-radius: 3px;
+            }
+            QCheckBox::indicator:checked {
+                background-color: #00D4AA;
+                border: 1px solid #00D4AA;
             }
         """)
 
