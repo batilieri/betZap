@@ -230,28 +230,86 @@ class QRCodeDialog(QDialog):
         try:
             success, qr_data = self.api_manager.get_instance_qr_code()
 
-            if success:
-                if qr_data.get('type') == 'base64':
-                    # QR Code em base64
-                    self.display_base64_qr(qr_data.get('qrcode', ''))
-                    self.status_label.setText("✅ QR Code gerado. Escaneie com seu celular.")
+            print(f"Debug QR - Success: {success}")
+            print(f"Debug QR - Data type: {type(qr_data)}")
+            print(f"Debug QR - Data: {str(qr_data)[:200]}...")  # Primeiros 200 chars
 
-                elif qr_data.get('type') == 'binary':
-                    # QR Code como imagem binária
-                    self.display_binary_qr(qr_data.get('qrcode', b''))
-                    self.status_label.setText("✅ QR Code gerado. Escaneie com seu celular.")
+            if success:
+                if isinstance(qr_data, dict):
+                    qr_type = qr_data.get('type', 'unknown')
+                    print(f"Debug QR - Type: {qr_type}")
+
+                    if qr_type == 'base64':
+                        # QR Code em base64
+                        qr_code_data = qr_data.get('qrcode', '')
+                        print(f"Debug QR - Base64 length: {len(qr_code_data)}")
+                        print(f"Debug QR - Base64 starts with: {qr_code_data[:50]}...")
+
+                        if qr_code_data:
+                            self.display_base64_qr(qr_code_data)
+                            self.status_label.setText("✅ QR Code gerado. Escaneie com seu celular.")
+                        else:
+                            self.status_label.setText("❌ QR Code vazio na resposta")
+                            self.qr_label.setText("QR Code vazio na resposta da API")
+
+                    elif qr_type == 'binary':
+                        # QR Code como imagem binária
+                        qr_code_data = qr_data.get('qrcode', b'')
+                        print(f"Debug QR - Binary length: {len(qr_code_data)}")
+
+                        if qr_code_data:
+                            self.display_binary_qr(qr_code_data)
+                            self.status_label.setText("✅ QR Code gerado. Escaneie com seu celular.")
+                        else:
+                            self.status_label.setText("❌ Dados binários vazios")
+                            self.qr_label.setText("Dados binários vazios na resposta")
+
+                    else:
+                        self.status_label.setText(f"❌ Tipo de QR Code não suportado: {qr_type}")
+                        self.qr_label.setText(f"Tipo não suportado: {qr_type}")
+
+                elif isinstance(qr_data, str):
+                    # Resposta direta como string base64
+                    print(f"Debug QR - Direct string length: {len(qr_data)}")
+                    if qr_data:
+                        self.display_base64_qr(qr_data)
+                        self.status_label.setText("✅ QR Code gerado. Escaneie com seu celular.")
+                    else:
+                        self.status_label.setText("❌ String QR Code vazia")
+                        self.qr_label.setText("String QR Code vazia")
+
+                elif isinstance(qr_data, bytes):
+                    # Resposta direta como bytes
+                    print(f"Debug QR - Direct bytes length: {len(qr_data)}")
+                    if qr_data:
+                        self.display_binary_qr(qr_data)
+                        self.status_label.setText("✅ QR Code gerado. Escaneie com seu celular.")
+                    else:
+                        self.status_label.setText("❌ Bytes QR Code vazios")
+                        self.qr_label.setText("Bytes QR Code vazios")
 
                 else:
-                    self.status_label.setText("❌ Formato de QR Code não suportado")
-                    self.qr_label.setText("Formato não suportado")
+                    self.status_label.setText("❌ Formato de resposta não reconhecido")
+                    self.qr_label.setText(f"Formato não reconhecido: {type(qr_data)}")
+                    print(f"Debug QR - Unrecognized type: {type(qr_data)}")
+
             else:
-                error_msg = qr_data.get('error', 'Erro desconhecido')
+                error_msg = "Erro desconhecido"
+                if isinstance(qr_data, dict):
+                    error_msg = qr_data.get('error', 'Erro desconhecido')
+                elif isinstance(qr_data, str):
+                    error_msg = qr_data
+
+                print(f"Debug QR - Error: {error_msg}")
                 self.status_label.setText(f"❌ Erro: {error_msg}")
                 self.qr_label.setText(f"Erro ao gerar QR Code:\n{error_msg}")
 
         except Exception as e:
-            self.status_label.setText(f"❌ Erro: {str(e)}")
-            self.qr_label.setText(f"Erro inesperado:\n{str(e)}")
+            error_msg = str(e)
+            print(f"Debug QR - Exception: {error_msg}")
+            print(f"Debug QR - Exception type: {type(e)}")
+            self.status_label.setText(f"❌ Erro: {error_msg}")
+            self.qr_label.setText(f"Erro inesperado:\n{error_msg}")
 
         finally:
             self.refresh_button.setEnabled(True)
@@ -261,42 +319,90 @@ class QRCodeDialog(QDialog):
         """Exibe QR Code a partir de dados base64"""
         try:
             import base64
-            from io import BytesIO
 
-            # Remover prefixo data:image se existir
+            # Verificar se os dados têm o prefixo data:image
             if base64_data.startswith('data:image'):
+                # Extrair apenas a parte base64 após a vírgula
                 base64_data = base64_data.split(',')[1]
 
+            # Remover possíveis quebras de linha e espaços
+            base64_data = base64_data.replace('\n', '').replace('\r', '').replace(' ', '')
+
             # Decodificar base64
-            image_data = base64.b64decode(base64_data)
+            try:
+                image_data = base64.b64decode(base64_data)
+            except Exception as decode_error:
+                self.qr_label.setText(f"Erro ao decodificar base64:\n{str(decode_error)}")
+                return
+
+            # Verificar se os dados são válidos
+            if len(image_data) == 0:
+                self.qr_label.setText("Dados de imagem vazios")
+                return
 
             # Criar pixmap
             pixmap = QPixmap()
-            pixmap.loadFromData(image_data)
+            success = pixmap.loadFromData(image_data)
+
+            if not success:
+                self.qr_label.setText("Erro ao carregar dados da imagem")
+                return
+
+            # Verificar se o pixmap não está vazio
+            if pixmap.isNull():
+                self.qr_label.setText("Imagem inválida ou corrompida")
+                return
 
             # Redimensionar mantendo proporção
-            pixmap = pixmap.scaled(380, 380, Qt.AspectRatioMode.KeepAspectRatio,
-                                   Qt.TransformationMode.SmoothTransformation)
+            if pixmap.width() > 0 and pixmap.height() > 0:
+                pixmap = pixmap.scaled(380, 380, Qt.AspectRatioMode.KeepAspectRatio,
+                                       Qt.TransformationMode.SmoothTransformation)
+                self.qr_label.setPixmap(pixmap)
+            else:
+                self.qr_label.setText("Dimensões inválidas da imagem")
 
-            self.qr_label.setPixmap(pixmap)
-
+        except ImportError:
+            self.qr_label.setText("Módulo base64 não disponível")
         except Exception as e:
-            self.qr_label.setText(f"Erro ao exibir QR Code:\n{str(e)}")
+            self.qr_label.setText(f"Erro inesperado ao exibir QR Code:\n{str(e)}")
+            # Log do erro para debug
+            print(f"Erro detalhado: {e}")
+            print(f"Tipo do erro: {type(e)}")
+            print(f"Tamanho dos dados base64: {len(base64_data) if base64_data else 'None'}")
 
     def display_binary_qr(self, binary_data: bytes):
         """Exibe QR Code a partir de dados binários"""
         try:
+            # Verificar se os dados binários são válidos
+            if not binary_data or len(binary_data) == 0:
+                self.qr_label.setText("Dados binários vazios")
+                return
+
             pixmap = QPixmap()
-            pixmap.loadFromData(binary_data)
+            success = pixmap.loadFromData(binary_data)
+
+            if not success:
+                self.qr_label.setText("Erro ao carregar dados binários da imagem")
+                return
+
+            # Verificar se o pixmap não está vazio
+            if pixmap.isNull():
+                self.qr_label.setText("Imagem binária inválida")
+                return
 
             # Redimensionar mantendo proporção
-            pixmap = pixmap.scaled(380, 380, Qt.AspectRatioMode.KeepAspectRatio,
-                                   Qt.TransformationMode.SmoothTransformation)
-
-            self.qr_label.setPixmap(pixmap)
+            if pixmap.width() > 0 and pixmap.height() > 0:
+                pixmap = pixmap.scaled(380, 380, Qt.AspectRatioMode.KeepAspectRatio,
+                                       Qt.TransformationMode.SmoothTransformation)
+                self.qr_label.setPixmap(pixmap)
+            else:
+                self.qr_label.setText("Dimensões inválidas da imagem binária")
 
         except Exception as e:
-            self.qr_label.setText(f"Erro ao exibir QR Code:\n{str(e)}")
+            self.qr_label.setText(f"Erro ao exibir QR Code binário:\n{str(e)}")
+            # Log do erro para debug
+            print(f"Erro detalhado: {e}")
+            print(f"Tamanho dos dados binários: {len(binary_data) if binary_data else 'None'}")
 
     def refresh_qr_code(self):
         """Atualiza o QR Code"""

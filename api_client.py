@@ -216,44 +216,6 @@ class WAPIClient:
         except Exception as e:
             return False, {'error': str(e)}
 
-    def create_group(self, group_name: str, participants: List[str]) -> Tuple[bool, Dict]:
-        """
-        Cria um grupo
-
-        Endpoint: POST /api/v1/instances/{instance_id}/client/action/create-group
-        """
-        try:
-            if not self._validate_credentials():
-                return False, {'error': 'Credenciais não configuradas'}
-
-            url = f"{self.base_url}/api/v1/instances/{self.instance_id}/client/action/create-group"
-
-            # Formatar participantes
-            formatted_participants = []
-            for participant in participants:
-                formatted_participants.append(self._format_phone_number(participant))
-
-            payload = {
-                'name': group_name,
-                'participants': formatted_participants
-            }
-
-            response = self.session.post(url, json=payload, timeout=15)
-
-            if response.status_code == 200:
-                data = response.json()
-                return True, {
-                    'group_id': data.get('id', ''),
-                    'group_name': group_name,
-                    'participants_count': len(formatted_participants),
-                    'participants': formatted_participants
-                }
-            else:
-                return False, {'error': f"HTTP {response.status_code}: {response.text}"}
-
-        except Exception as e:
-            return False, {'error': str(e)}
-
     def get_instance_qr_code(self) -> Tuple[bool, str]:
         """
         Obtém QR Code para conectar a instância
@@ -324,6 +286,44 @@ class WAPIClient:
         except Exception as e:
             return False, {'error': str(e)}
 
+    def create_group(self, group_name: str, participants: List[str]) -> Tuple[bool, Dict]:
+        """
+        Cria um grupo
+
+        Endpoint: POST /api/v1/instances/{instance_id}/client/action/create-group
+        """
+        try:
+            if not self._validate_credentials():
+                return False, {'error': 'Credenciais não configuradas'}
+
+            url = f"{self.base_url}/api/v1/instances/{self.instance_id}/client/action/create-group"
+
+            # Formatar participantes
+            formatted_participants = []
+            for participant in participants:
+                formatted_participants.append(self._format_phone_number(participant))
+
+            payload = {
+                'name': group_name,
+                'participants': formatted_participants
+            }
+
+            response = self.session.post(url, json=payload, timeout=15)
+
+            if response.status_code == 200:
+                data = response.json()
+                return True, {
+                    'group_id': data.get('id', ''),
+                    'group_name': group_name,
+                    'participants_count': len(formatted_participants),
+                    'participants': formatted_participants
+                }
+            else:
+                return False, {'error': f"HTTP {response.status_code}: {response.text}"}
+
+        except Exception as e:
+            return False, {'error': str(e)}
+
     def get_group_info(self, group_id: str) -> Tuple[bool, Dict]:
         """
         Obtém informações de um grupo
@@ -357,6 +357,10 @@ class WAPIClient:
 
         except Exception as e:
             return False, {'error': str(e)}
+
+    # ===========================================
+    # MÉTODOS AUXILIARES PRIVADOS
+    # ===========================================
 
     def _validate_credentials(self) -> bool:
         """Valida se as credenciais estão configuradas"""
@@ -505,9 +509,9 @@ class WAPIClient:
 if __name__ == "__main__":
     # Exemplo de como usar o cliente
     client = WAPIClient(
-        base_url="https://api.w-api.com",
-        token="seu_token_aqui",
-        instance_id="sua_instancia_aqui"
+        base_url="https://api.w-api.com/v1",
+        token="hov0ig4dm6Qadw7qmFdRHCuul1G15YUno",
+        instance_id="LITE-YLOCZC-ZGHBVR"
     )
 
     # Validar configuração
@@ -523,7 +527,7 @@ if __name__ == "__main__":
             print(f"Erro no status: {status}")
 
         # Enviar mensagem de teste
-        success, result = client.send_text_message("5511999999999", "Olá, teste da API!")
+        success, result = client.send_text_message("556999267344", "Olá, teste da API!")
         if success:
             print(f"Mensagem enviada: {result}")
         else:
@@ -539,14 +543,6 @@ if __name__ == "__main__":
             print("Erro ao obter chats")
     else:
         print("Configure a API antes de usar")
-
-
-
-
-
-
-
-
 
 
 
