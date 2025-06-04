@@ -11,7 +11,7 @@ from datetime import datetime
 import hashlib
 
 # ✅ WEBHOOK CORRETO
-WEBHOOK_ID = '0e6e92fd-c357-44e4-b1e5-067d6ae4cd0d'
+WEBHOOK_ID = 'da1ffbef-31d9-41be-bd48-b1da5038715a'
 
 
 class WebhookDebugMelhorado:

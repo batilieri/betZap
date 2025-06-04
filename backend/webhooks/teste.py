@@ -1,96 +1,286 @@
-import requests
+#!/usr/bin/env python3
+"""
+Webhook com Serveo - Túnel SSH Gratuito
+Alternativa ao ngrok que não precisa de autenticação
+"""
+
+from flask import Flask, request, jsonify
 import json
+import subprocess
+import threading
+import time
+from datetime import datetime
+import requests
+import re
 
-class WAPIWebhookManager:
-    """
-    Classe para auto-configuração de Webhooks na W-API (WhizAPI) via requests.
-    Permite configurar webhooks de envio e recebimento para integração com webhook.site
-    """
 
-    def __init__(self, instance_id, api_token, webhook_site_url):
-        """
-        Inicializa a configuração.
-        :param instance_id: str - ID da instância na W-API.
-        :param api_token: str - Token de autorização da W-API.
-        :param webhook_site_url: str - URL completa do webhook.site.
-        """
-        self.instance_id = instance_id
-        self.api_token = api_token
-        self.webhook_site_url = webhook_site_url
+class WebhookServeo:
+    def __init__(self, porta=5000):
+        self.porta = porta
+        self.app = Flask(__name__)
+        self.requisicoes = []
+        self.serveo_url = None
+        self.processo_serveo = None
+        self.configurar_rotas()
 
-        self.base_url = "https://api.w-api.app/v1/webhook"
-        self.headers = {
-            "Content-Type": "application/json",
-            "Authorization": f"Bearer {self.api_token}"
-        }
+    def configurar_rotas(self):
+        """Configura rotas do Flask"""
 
-    def configurar_webhook_envio(self):
-        """
-        Configura o webhook de envio na W-API.
-        """
-        url = f"{self.base_url}/update-webhook-delivery?instanceId={self.instance_id}"
-        payload = {"value": self.webhook_site_url}
+        @self.app.route('/webhook', methods=['GET', 'POST', 'PUT', 'DELETE', 'PATCH'])
+        def webhook():
+            dados = {
+                'timestamp': datetime.now().isoformat(),
+                'method': request.method,
+                'ip': request.remote_addr,
+                'user_agent': request.headers.get('User-Agent', ''),
+                'headers': dict(request.headers),
+                'json': request.get_json(silent=True),
+                'data': request.get_data(as_text=True),
+                'args': dict(request.args),
+                'form': dict(request.form)
+            }
 
-        print(f"🔧 Configurando webhook de ENVIO...")
-        response = requests.put(url, headers=self.headers, json=payload, timeout=10)
-        return self._tratar_resposta(response, "envio")
+            self.requisicoes.append(dados)
+            self.log_requisicao(dados)
 
-    def configurar_webhook_recebimento(self):
-        """
-        Configura o webhook de recebimento na W-API.
-        """
-        url = f"{self.base_url}/update-webhook-received?instanceId={self.instance_id}"
-        payload = {"value": self.webhook_site_url}
+            return jsonify({
+                'status': 'success',
+                'message': 'Webhook recebido via Serveo!',
+                'timestamp': dados['timestamp'],
+                'total': len(self.requisicoes)
+            })
 
-        print(f"🔧 Configurando webhook de RECEBIMENTO...")
-        response = requests.put(url, headers=self.headers, json=payload, timeout=10)
-        return self._tratar_resposta(response, "recebimento")
+        @self.app.route('/status')
+        def status():
+            return jsonify({
+                'status': 'online',
+                'total_requisicoes': len(self.requisicoes),
+                'serveo_url': self.serveo_url,
+                'porta_local': self.porta
+            })
 
-    def _tratar_resposta(self, response, tipo):
-        """
-        Trata a resposta da API.
-        """
-        if response.status_code == 200:
-            data = response.json()
-            if not data.get("error"):
-                print(f"✅ Webhook de {tipo} configurado com sucesso: {data.get('message')}")
-                return True
-            else:
-                print(f"❌ Erro na configuração de {tipo}: {data}")
-        else:
-            print(f"❌ Erro HTTP {response.status_code}: {response.text}")
-        return False
+    def log_requisicao(self, dados):
+        """Log da requisição"""
+        print(f"\n🆕 {dados['method']} - {datetime.now().strftime('%H:%M:%S')}")
+        print(f"🌐 IP: {dados['ip']}")
 
-    def verificar_webhook_site(self):
-        """
-        Testa a URL do webhook.site diretamente.
-        """
-        print(f"🔍 Verificando acesso ao webhook.site: {self.webhook_site_url}")
+        if dados['json']:
+            print("📦 JSON:")
+            print(json.dumps(dados['json'], indent=2, ensure_ascii=False))
+        elif dados['data']:
+            print(f"📄 Data: {dados['data']}")
+        elif dados['form']:
+            print(f"📝 Form: {dados['form']}")
+
+        print("-" * 40)
+
+    def iniciar_serveo(self):
+        """Inicia túnel Serveo via SSH"""
+        print(f"🚀 Iniciando túnel Serveo...")
+
         try:
-            response = requests.get(self.webhook_site_url, timeout=10)
-            print(f"📊 Status: {response.status_code}")
-            print(f"📏 Tamanho: {len(response.text)} chars")
-            print(f"📄 Conteúdo inicial: {response.text[:500]}...")
+            # Comando SSH para criar túnel
+            cmd = [
+                'ssh',
+                '-o', 'StrictHostKeyChecking=no',
+                '-o', 'ServerAliveInterval=60',
+                '-R', f'80:localhost:{self.porta}',
+                'serveo.net'
+            ]
+
+            # Iniciar processo em background
+            self.processo_serveo = subprocess.Popen(
+                cmd,
+                stdout=subprocess.PIPE,
+                stderr=subprocess.PIPE,
+                text=True,
+                bufsize=1,
+                universal_newlines=True
+            )
+
+            # Aguardar e capturar URL
+            timeout = 15
+            start_time = time.time()
+
+            while time.time() - start_time < timeout:
+                if self.processo_serveo.poll() is not None:
+                    # Processo terminou, verificar erro
+                    stderr = self.processo_serveo.stderr.read()
+                    print(f"❌ Serveo falhou: {stderr}")
+                    return False
+
+                # Tentar ler stdout
+                try:
+                    line = self.processo_serveo.stdout.readline()
+                    if line:
+                        print(f"📡 Serveo: {line.strip()}")
+
+                        # Procurar URL na saída
+                        match = re.search(r'https://[a-zA-Z0-9]+\.serveo\.net', line)
+                        if match:
+                            self.serveo_url = match.group(0)
+                            print(f"✅ Túnel Serveo criado!")
+                            print(f"🔗 URL: {self.serveo_url}")
+                            return True
+
+                except:
+                    pass
+
+                time.sleep(0.5)
+
+            print(f"⏰ Timeout ao obter URL do Serveo")
+            return False
+
+        except FileNotFoundError:
+            print(f"❌ SSH não encontrado!")
+            print(f"💡 No Windows: instale Git Bash ou OpenSSH")
+            print(f"💡 No Linux/Mac: sudo apt install openssh-client")
+            return False
         except Exception as e:
-            print(f"❌ Erro ao acessar webhook.site: {e}")
+            print(f"❌ Erro ao iniciar Serveo: {e}")
+            return False
 
-    def configurar_tudo(self):
-        """
-        Executa a configuração completa de ambos os webhooks.
-        """
-        print("🚀 Iniciando configuração completa de Webhooks W-API...")
-        self.configurar_webhook_envio()
-        self.configurar_webhook_recebimento()
-        self.verificar_webhook_site()
-        print("✅ Configuração finalizada.")
+    def parar_serveo(self):
+        """Para o túnel Serveo"""
+        if self.processo_serveo:
+            try:
+                self.processo_serveo.terminate()
+                self.processo_serveo.wait(timeout=5)
+                print(f"🛑 Túnel Serveo fechado")
+            except:
+                self.processo_serveo.kill()
+
+    def testar_webhook(self):
+        """Testa o webhook via Serveo"""
+        if not self.serveo_url:
+            return
+
+        print(f"\n🧪 TESTANDO WEBHOOK...")
+
+        try:
+            # Teste GET
+            response = requests.get(f"{self.serveo_url}/webhook", timeout=10)
+            print(f"✅ GET: Status {response.status_code}")
+
+            # Teste POST
+            dados_teste = {
+                "tipo": "teste_serveo",
+                "mensagem": "Teste via túnel Serveo",
+                "timestamp": datetime.now().isoformat()
+            }
+
+            response = requests.post(
+                f"{self.serveo_url}/webhook",
+                json=dados_teste,
+                timeout=10
+            )
+            print(f"✅ POST: Status {response.status_code}")
+
+        except Exception as e:
+            print(f"❌ Teste falhou: {e}")
+
+    def executar(self):
+        """Executa webhook com Serveo"""
+        print("🚀 WEBHOOK COM SERVEO")
+        print("=" * 50)
+
+        # Iniciar servidor Flask em thread
+        def iniciar_flask():
+            self.app.run(host='127.0.0.1', port=self.porta, debug=False)
+
+        thread_flask = threading.Thread(target=iniciar_flask, daemon=True)
+        thread_flask.start()
+
+        # Aguardar Flask iniciar
+        time.sleep(2)
+        print(f"✅ Servidor Flask rodando na porta {self.porta}")
+
+        # Iniciar túnel Serveo
+        if not self.iniciar_serveo():
+            print(f"❌ Falha ao criar túnel. Usando apenas localhost.")
+            self.serveo_url = None
+
+        # Testar se funcionou
+        if self.serveo_url:
+            self.testar_webhook()
+
+            print(f"\n📋 URLS IMPORTANTES:")
+            print(f"   🔗 Webhook: {self.serveo_url}/webhook")
+            print(f"   📊 Status: {self.serveo_url}/status")
+        else:
+            print(f"\n📋 URL LOCAL:")
+            print(f"   🔗 Webhook: http://localhost:{self.porta}/webhook")
+
+        print(f"\n🔄 MONITORANDO...")
+        print(f"💡 Pressione Ctrl+C para parar")
+        print("=" * 50)
+
+        try:
+            contador = 0
+            while True:
+                total = len(self.requisicoes)
+                if total > contador:
+                    print(f"📈 Total: {total}")
+                    contador = total
+
+                print(f"\r🔍 Aguardando... {datetime.now().strftime('%H:%M:%S')}",
+                      end="", flush=True)
+                time.sleep(1)
+
+        except KeyboardInterrupt:
+            print(f"\n\n👋 Encerrando...")
+            self.parar_serveo()
+            print(f"📊 Total processado: {len(self.requisicoes)}")
 
 
-if __name__ == "__main__":
-    INSTANCE_ID = "3B6XIW-ZTS923-GEAY6V"
-    API_TOKEN = "Q8EOH07SJkXhg4iT6Qmhz1BJdLl8nL9WF"
-    WEBHOOK_SITE_URL = "https://webhook.site/0e6e92fd-c357-44e4-b1e5-067d6ae4cd0d"
+def main():
+    """Função principal"""
+    print("🔍 WEBHOOK SERVEO v1.0")
+    print("=" * 40)
+    print("🌐 Túnel SSH gratuito via serveo.net")
+    print("🔓 Sem necessidade de autenticação")
+    print("=" * 40)
 
-    gestor_webhook = WAPIWebhookManager(INSTANCE_ID, API_TOKEN, WEBHOOK_SITE_URL)
+    try:
+        webhook = WebhookServeo(porta=5000)
+        webhook.executar()
 
-    # Configuração completa
-    gestor_webhook.configurar_tudo()
+    except KeyboardInterrupt:
+        print("\n👋 Programa interrompido!")
+    except Exception as e:
+        print(f"\n❌ Erro: {e}")
+
+
+if __name__ == '__main__':
+    main()
+
+# ===============================================
+# 🌐 SERVEO.NET - CARACTERÍSTICAS:
+# ===============================================
+#
+# ✅ Totalmente gratuito
+# ✅ Sem necessidade de cadastro
+# ✅ Usa SSH (disponível na maioria dos sistemas)
+# ✅ URLs públicas https://
+# ✅ Sem limite de tempo
+#
+# ===============================================
+# 📋 REQUISITOS:
+# ===============================================
+#
+# • SSH client instalado
+# • Windows: Git Bash ou OpenSSH
+# • Linux/Mac: openssh-client
+# • Flask: pip install flask requests
+#
+# ===============================================
+# 💡 COMO FUNCIONA:
+# ===============================================
+#
+# 1. Cria túnel SSH para serveo.net
+# 2. Serveo.net redireciona tráfego para localhost
+# 3. Você recebe URL pública gratuita
+# 4. Exemplo: https://abc123.serveo.net
+#
+# ===============================================
+# https://dashboard.ngrok.com/get-started/your-authtoken
