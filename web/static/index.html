@@ -1,0 +1,1087 @@
+<!DOCTYPE html>
+<html lang="pt-BR">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>WhatsApp Atendimento</title>
+    <script src="https://unpkg.com/vue@3/dist/vue.global.js"></script>
+    <script src="https://unpkg.com/axios/dist/axios.min.js"></script>
+    <link href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.0.0/css/all.min.css" rel="stylesheet">
+    <style>
+        * {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+        }
+
+        body {
+            font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            height: 100vh;
+            overflow: hidden;
+        }
+
+        .app-container {
+            display: flex;
+            height: 100vh;
+            background: white;
+            box-shadow: 0 0 50px rgba(0, 0, 0, 0.1);
+        }
+
+        /* Sidebar */
+        .sidebar {
+            width: 350px;
+            background: #f8f9fa;
+            border-right: 1px solid #e9ecef;
+            display: flex;
+            flex-direction: column;
+        }
+
+        .sidebar-header {
+            padding: 20px;
+            background: linear-gradient(135deg, #25D366, #128C7E);
+            color: white;
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+        }
+
+        .sidebar-header h2 {
+            font-size: 18px;
+            font-weight: 600;
+        }
+
+        .user-menu {
+            position: relative;
+        }
+
+        .user-avatar {
+            width: 35px;
+            height: 35px;
+            border-radius: 50%;
+            background: rgba(255, 255, 255, 0.2);
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            cursor: pointer;
+            transition: background 0.3s;
+        }
+
+        .user-avatar:hover {
+            background: rgba(255, 255, 255, 0.3);
+        }
+
+        .search-box {
+            padding: 15px;
+            background: white;
+            border-bottom: 1px solid #e9ecef;
+        }
+
+        .search-input {
+            width: 100%;
+            padding: 12px 16px;
+            border: 1px solid #ddd;
+            border-radius: 25px;
+            outline: none;
+            font-size: 14px;
+            background: #f5f5f5;
+            transition: all 0.3s;
+        }
+
+        .search-input:focus {
+            background: white;
+            border-color: #25D366;
+            box-shadow: 0 0 0 3px rgba(37, 211, 102, 0.1);
+        }
+
+        .chat-filters {
+            padding: 10px 15px;
+            display: flex;
+            gap: 10px;
+            border-bottom: 1px solid #e9ecef;
+        }
+
+        .filter-btn {
+            padding: 8px 16px;
+            border: none;
+            border-radius: 20px;
+            background: #e9ecef;
+            color: #6c757d;
+            font-size: 12px;
+            cursor: pointer;
+            transition: all 0.3s;
+        }
+
+        .filter-btn.active {
+            background: #25D366;
+            color: white;
+        }
+
+        .chat-list {
+            flex: 1;
+            overflow-y: auto;
+        }
+
+        .chat-item {
+            padding: 15px;
+            border-bottom: 1px solid #f0f0f0;
+            cursor: pointer;
+            transition: background 0.3s;
+            display: flex;
+            align-items: center;
+            gap: 12px;
+        }
+
+        .chat-item:hover {
+            background: #f8f9fa;
+        }
+
+        .chat-item.active {
+            background: #e3f2fd;
+            border-right: 3px solid #25D366;
+        }
+
+        .chat-avatar {
+            width: 45px;
+            height: 45px;
+            border-radius: 50%;
+            background: linear-gradient(135deg, #25D366, #128C7E);
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            color: white;
+            font-weight: bold;
+            flex-shrink: 0;
+        }
+
+        .chat-info {
+            flex: 1;
+            min-width: 0;
+        }
+
+        .chat-name {
+            font-weight: 600;
+            font-size: 14px;
+            margin-bottom: 4px;
+            color: #2c3e50;
+        }
+
+        .chat-last-message {
+            font-size: 12px;
+            color: #7f8c8d;
+            white-space: nowrap;
+            overflow: hidden;
+            text-overflow: ellipsis;
+        }
+
+        .chat-meta {
+            display: flex;
+            flex-direction: column;
+            align-items: flex-end;
+            gap: 4px;
+        }
+
+        .chat-time {
+            font-size: 11px;
+            color: #95a5a6;
+        }
+
+        .chat-badge {
+            background: #25D366;
+            color: white;
+            border-radius: 50%;
+            width: 20px;
+            height: 20px;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            font-size: 11px;
+            font-weight: bold;
+        }
+
+        .chat-status {
+            width: 8px;
+            height: 8px;
+            border-radius: 50%;
+            margin-left: 5px;
+        }
+
+        .status-pending { background: #f39c12; }
+        .status-open { background: #27ae60; }
+        .status-closed { background: #e74c3c; }
+
+        /* Main Chat Area */
+        .chat-container {
+            flex: 1;
+            display: flex;
+            flex-direction: column;
+            background: #ffffff;
+        }
+
+        .chat-header {
+            padding: 20px;
+            background: white;
+            border-bottom: 1px solid #e9ecef;
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            box-shadow: 0 2px 10px rgba(0, 0, 0, 0.05);
+        }
+
+        .chat-header-info {
+            display: flex;
+            align-items: center;
+            gap: 12px;
+        }
+
+        .chat-header-avatar {
+            width: 40px;
+            height: 40px;
+            border-radius: 50%;
+            background: linear-gradient(135deg, #25D366, #128C7E);
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            color: white;
+            font-weight: bold;
+        }
+
+        .chat-header-details h3 {
+            font-size: 16px;
+            color: #2c3e50;
+            margin-bottom: 2px;
+        }
+
+        .chat-header-details p {
+            font-size: 12px;
+            color: #7f8c8d;
+        }
+
+        .chat-actions {
+            display: flex;
+            gap: 10px;
+        }
+
+        .action-btn {
+            padding: 8px 12px;
+            border: none;
+            border-radius: 6px;
+            background: #f8f9fa;
+            color: #6c757d;
+            cursor: pointer;
+            transition: all 0.3s;
+            font-size: 14px;
+        }
+
+        .action-btn:hover {
+            background: #e9ecef;
+        }
+
+        .action-btn.primary {
+            background: #25D366;
+            color: white;
+        }
+
+        .action-btn.primary:hover {
+            background: #128C7E;
+        }
+
+        .messages-container {
+            flex: 1;
+            overflow-y: auto;
+            padding: 20px;
+            background: #f8f9fa;
+            background-image:
+                radial-gradient(circle at 25px 25px, rgba(255,255,255,0.5) 2px, transparent 0),
+                radial-gradient(circle at 75px 75px, rgba(255,255,255,0.5) 2px, transparent 0);
+            background-size: 100px 100px;
+        }
+
+        .message {
+            margin-bottom: 15px;
+            display: flex;
+            align-items: flex-end;
+            gap: 8px;
+        }
+
+        .message.sent {
+            flex-direction: row-reverse;
+        }
+
+        .message-avatar {
+            width: 28px;
+            height: 28px;
+            border-radius: 50%;
+            background: #bdc3c7;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            color: white;
+            font-size: 10px;
+            font-weight: bold;
+            flex-shrink: 0;
+        }
+
+        .message-content {
+            max-width: 70%;
+            padding: 12px 16px;
+            border-radius: 18px;
+            position: relative;
+            box-shadow: 0 2px 10px rgba(0, 0, 0, 0.1);
+        }
+
+        .message.received .message-content {
+            background: white;
+            border-bottom-left-radius: 4px;
+        }
+
+        .message.sent .message-content {
+            background: #25D366;
+            color: white;
+            border-bottom-right-radius: 4px;
+        }
+
+        .message-text {
+            font-size: 14px;
+            line-height: 1.4;
+            margin-bottom: 4px;
+        }
+
+        .message-time {
+            font-size: 11px;
+            opacity: 0.7;
+            text-align: right;
+        }
+
+        .message-input-container {
+            padding: 20px;
+            background: white;
+            border-top: 1px solid #e9ecef;
+            display: flex;
+            align-items: center;
+            gap: 12px;
+        }
+
+        .attachment-btn {
+            padding: 10px;
+            border: none;
+            border-radius: 50%;
+            background: #f8f9fa;
+            color: #6c757d;
+            cursor: pointer;
+            transition: all 0.3s;
+            width: 40px;
+            height: 40px;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+        }
+
+        .attachment-btn:hover {
+            background: #e9ecef;
+        }
+
+        .message-input {
+            flex: 1;
+            padding: 12px 16px;
+            border: 1px solid #ddd;
+            border-radius: 25px;
+            outline: none;
+            font-size: 14px;
+            resize: none;
+            min-height: 20px;
+            max-height: 100px;
+        }
+
+        .send-btn {
+            padding: 10px;
+            border: none;
+            border-radius: 50%;
+            background: #25D366;
+            color: white;
+            cursor: pointer;
+            transition: all 0.3s;
+            width: 40px;
+            height: 40px;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+        }
+
+        .send-btn:hover {
+            background: #128C7E;
+        }
+
+        .send-btn:disabled {
+            background: #bdc3c7;
+            cursor: not-allowed;
+        }
+
+        /* Login Modal */
+        .modal-overlay {
+            position: fixed;
+            top: 0;
+            left: 0;
+            right: 0;
+            bottom: 0;
+            background: rgba(0, 0, 0, 0.5);
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            z-index: 1000;
+        }
+
+        .modal {
+            background: white;
+            border-radius: 10px;
+            padding: 30px;
+            width: 400px;
+            max-width: 90%;
+            box-shadow: 0 10px 30px rgba(0, 0, 0, 0.3);
+        }
+
+        .modal h2 {
+            margin-bottom: 20px;
+            color: #2c3e50;
+            text-align: center;
+        }
+
+        .form-group {
+            margin-bottom: 20px;
+        }
+
+        .form-group label {
+            display: block;
+            margin-bottom: 5px;
+            color: #34495e;
+            font-weight: 500;
+        }
+
+        .form-group input {
+            width: 100%;
+            padding: 12px;
+            border: 1px solid #ddd;
+            border-radius: 6px;
+            font-size: 14px;
+            outline: none;
+            transition: border-color 0.3s;
+        }
+
+        .form-group input:focus {
+            border-color: #25D366;
+        }
+
+        .btn {
+            width: 100%;
+            padding: 12px;
+            border: none;
+            border-radius: 6px;
+            background: #25D366;
+            color: white;
+            font-size: 16px;
+            cursor: pointer;
+            transition: background 0.3s;
+        }
+
+        .btn:hover {
+            background: #128C7E;
+        }
+
+        /* Loading */
+        .loading {
+            text-align: center;
+            padding: 40px;
+            color: #7f8c8d;
+        }
+
+        .spinner {
+            animation: spin 1s linear infinite;
+            font-size: 24px;
+            margin-bottom: 10px;
+        }
+
+        @keyframes spin {
+            from { transform: rotate(0deg); }
+            to { transform: rotate(360deg); }
+        }
+
+        /* Responsive */
+        @media (max-width: 768px) {
+            .sidebar {
+                width: 100%;
+                position: absolute;
+                z-index: 10;
+                transform: translateX(-100%);
+                transition: transform 0.3s;
+            }
+
+            .sidebar.open {
+                transform: translateX(0);
+            }
+
+            .chat-container {
+                width: 100%;
+            }
+        }
+
+        /* Typing indicator */
+        .typing-indicator {
+            display: flex;
+            align-items: center;
+            gap: 4px;
+            padding: 8px 12px;
+            background: #f0f0f0;
+            border-radius: 12px;
+            margin: 10px 0;
+        }
+
+        .typing-dot {
+            width: 6px;
+            height: 6px;
+            border-radius: 50%;
+            background: #999;
+            animation: typing 1.4s infinite;
+        }
+
+        .typing-dot:nth-child(2) { animation-delay: 0.2s; }
+        .typing-dot:nth-child(3) { animation-delay: 0.4s; }
+
+        @keyframes typing {
+            0%, 60%, 100% { transform: translateY(0); }
+            30% { transform: translateY(-10px); }
+        }
+    </style>
+</head>
+<body>
+    <div id="app">
+        <!-- Login Modal -->
+        <div v-if="!isAuthenticated" class="modal-overlay">
+            <div class="modal">
+                <h2><i class="fab fa-whatsapp" style="color: #25D366;"></i> WhatsApp Atendimento</h2>
+                <form @submit.prevent="login">
+                    <div class="form-group">
+                        <label>Email:</label>
+                        <input type="email" v-model="loginForm.email" required>
+                    </div>
+                    <div class="form-group">
+                        <label>Senha:</label>
+                        <input type="password" v-model="loginForm.password" required>
+                    </div>
+                    <button type="submit" class="btn" :disabled="isLoading">
+                        <span v-if="isLoading"><i class="fas fa-spinner spinner"></i> Entrando...</span>
+                        <span v-else>Entrar</span>
+                    </button>
+                </form>
+            </div>
+        </div>
+
+        <!-- Main App -->
+        <div v-if="isAuthenticated" class="app-container">
+            <!-- Sidebar -->
+            <div class="sidebar">
+                <div class="sidebar-header">
+                    <h2><i class="fab fa-whatsapp"></i> Atendimento</h2>
+                    <div class="user-menu">
+                        <div class="user-avatar" @click="logout">
+                            <i class="fas fa-user"></i>
+                        </div>
+                    </div>
+                </div>
+
+                <div class="search-box">
+                    <input
+                        type="text"
+                        class="search-input"
+                        placeholder="Pesquisar conversas..."
+                        v-model="searchQuery"
+                    >
+                </div>
+
+                <div class="chat-filters">
+                    <button
+                        class="filter-btn"
+                        :class="{ active: filterStatus === 'all' }"
+                        @click="filterStatus = 'all'"
+                    >
+                        Todos
+                    </button>
+                    <button
+                        class="filter-btn"
+                        :class="{ active: filterStatus === 'pending' }"
+                        @click="filterStatus = 'pending'"
+                    >
+                        Pendentes
+                    </button>
+                    <button
+                        class="filter-btn"
+                        :class="{ active: filterStatus === 'open' }"
+                        @click="filterStatus = 'open'"
+                    >
+                        Ativos
+                    </button>
+                </div>
+
+                <div class="chat-list">
+                    <div v-if="isLoadingChats" class="loading">
+                        <div class="spinner"><i class="fas fa-spinner"></i></div>
+                        <p>Carregando conversas...</p>
+                    </div>
+
+                    <div
+                        v-for="chat in filteredChats"
+                        :key="chat.id"
+                        class="chat-item"
+                        :class="{ active: selectedChat?.id === chat.id }"
+                        @click="selectChat(chat)"
+                    >
+                        <div class="chat-avatar">
+                            {{ chat.contact?.name?.charAt(0)?.toUpperCase() || 'C' }}
+                        </div>
+                        <div class="chat-info">
+                            <div class="chat-name">
+                                {{ chat.contact?.name || 'Cliente' }}
+                                <span
+                                    class="chat-status"
+                                    :class="`status-${chat.status}`"
+                                ></span>
+                            </div>
+                            <div class="chat-last-message">
+                                {{ getLastMessageText(chat) }}
+                            </div>
+                        </div>
+                        <div class="chat-meta">
+                            <div class="chat-time">
+                                {{ formatTime(chat.updated_at) }}
+                            </div>
+                            <div v-if="getUnreadCount(chat) > 0" class="chat-badge">
+                                {{ getUnreadCount(chat) }}
+                            </div>
+                        </div>
+                    </div>
+                </div>
+            </div>
+
+            <!-- Chat Container -->
+            <div class="chat-container">
+                <div v-if="!selectedChat" class="loading">
+                    <div><i class="fab fa-whatsapp" style="font-size: 48px; color: #25D366;"></i></div>
+                    <p>Selecione uma conversa para começar</p>
+                </div>
+
+                <template v-else>
+                    <!-- Chat Header -->
+                    <div class="chat-header">
+                        <div class="chat-header-info">
+                            <div class="chat-header-avatar">
+                                {{ selectedChat.contact?.name?.charAt(0)?.toUpperCase() || 'C' }}
+                            </div>
+                            <div class="chat-header-details">
+                                <h3>{{ selectedChat.contact?.name || 'Cliente' }}</h3>
+                                <p>
+                                    {{ selectedChat.contact?.phone }} •
+                                    <span :class="`status-${selectedChat.status}`">
+                                        {{ getStatusText(selectedChat.status) }}
+                                    </span>
+                                </p>
+                            </div>
+                        </div>
+                        <div class="chat-actions">
+                            <button
+                                v-if="selectedChat.status === 'pending'"
+                                class="action-btn primary"
+                                @click="assignChat(selectedChat.id)"
+                            >
+                                <i class="fas fa-user-check"></i> Assumir
+                            </button>
+                            <button
+                                v-if="selectedChat.status === 'open'"
+                                class="action-btn"
+                                @click="closeChat(selectedChat.id)"
+                            >
+                                <i class="fas fa-times"></i> Finalizar
+                            </button>
+                            <button class="action-btn" @click="showChatInfo = !showChatInfo">
+                                <i class="fas fa-info-circle"></i>
+                            </button>
+                        </div>
+                    </div>
+
+                    <!-- Messages -->
+                    <div class="messages-container" ref="messagesContainer">
+                        <div v-if="isLoadingMessages" class="loading">
+                            <div class="spinner"><i class="fas fa-spinner"></i></div>
+                            <p>Carregando mensagens...</p>
+                        </div>
+
+                        <div
+                            v-for="message in messages"
+                            :key="message.id"
+                            class="message"
+                            :class="{ sent: !message.is_from_customer, received: message.is_from_customer }"
+                        >
+                            <div class="message-avatar">
+                                <span v-if="message.is_from_customer">
+                                    {{ selectedChat.contact?.name?.charAt(0)?.toUpperCase() || 'C' }}
+                                </span>
+                                <span v-else>
+                                    {{ currentUser?.name?.charAt(0)?.toUpperCase() || 'A' }}
+                                </span>
+                            </div>
+                            <div class="message-content">
+                                <div v-if="message.message_type === 'image'" class="message-media">
+                                    <img :src="message.media_url" alt="Imagem" style="max-width: 200px; border-radius: 8px;">
+                                </div>
+                                <div v-else-if="message.message_type === 'audio'" class="message-media">
+                                    <audio controls>
+                                        <source :src="message.media_url" type="audio/mpeg">
+                                    </audio>
+                                </div>
+                                <div v-else-if="message.message_type === 'video'" class="message-media">
+                                    <video controls style="max-width: 200px;">
+                                        <source :src="message.media_url" type="video/mp4">
+                                    </video>
+                                </div>
+                                <div class="message-text">{{ message.content }}</div>
+                                <div class="message-time">{{ formatTime(message.created_at) }}</div>
+                            </div>
+                        </div>
+
+                        <!-- Typing Indicator -->
+                        <div v-if="isTyping" class="typing-indicator">
+                            <div class="typing-dot"></div>
+                            <div class="typing-dot"></div>
+                            <div class="typing-dot"></div>
+                            <span style="margin-left: 8px; font-size: 12px; color: #666;">digitando...</span>
+                        </div>
+                    </div>
+
+                    <!-- Message Input -->
+                    <div class="message-input-container">
+                        <button class="attachment-btn" @click="showAttachmentMenu = !showAttachmentMenu">
+                            <i class="fas fa-paperclip"></i>
+                        </button>
+
+                        <textarea
+                            class="message-input"
+                            v-model="newMessage"
+                            placeholder="Digite sua mensagem..."
+                            @keydown.enter.prevent="sendMessage"
+                            @input="handleTyping"
+                            rows="1"
+                        ></textarea>
+
+                        <button
+                            class="send-btn"
+                            @click="sendMessage"
+                            :disabled="!newMessage.trim()"
+                        >
+                            <i class="fas fa-paper-plane"></i>
+                        </button>
+                    </div>
+                </template>
+            </div>
+        </div>
+    </div>
+
+    <script>
+        const { createApp } = Vue;
+
+        createApp({
+            data() {
+                return {
+                    isAuthenticated: false,
+                    isLoading: false,
+                    isLoadingChats: false,
+                    isLoadingMessages: false,
+                    currentUser: null,
+                    loginForm: {
+                        email: '',
+                        password: ''
+                    },
+                    chats: [],
+                    selectedChat: null,
+                    messages: [],
+                    newMessage: '',
+                    searchQuery: '',
+                    filterStatus: 'all',
+                    websocket: null,
+                    isTyping: false,
+                    typingTimeout: null,
+                    showAttachmentMenu: false,
+                    showChatInfo: false
+                }
+            },
+            computed: {
+                filteredChats() {
+                    let filtered = this.chats;
+
+                    // Filtrar por status
+                    if (this.filterStatus !== 'all') {
+                        filtered = filtered.filter(chat => chat.status === this.filterStatus);
+                    }
+
+                    // Filtrar por busca
+                    if (this.searchQuery) {
+                        const query = this.searchQuery.toLowerCase();
+                        filtered = filtered.filter(chat =>
+                            chat.contact?.name?.toLowerCase().includes(query) ||
+                            chat.contact?.phone?.includes(query)
+                        );
+                    }
+
+                    return filtered.sort((a, b) => new Date(b.updated_at) - new Date(a.updated_at));
+                }
+            },
+            async mounted() {
+                // Verificar se já está autenticado
+                const token = localStorage.getItem('token');
+                if (token) {
+                    this.isAuthenticated = true;
+                    await this.initializeApp();
+                }
+            },
+            methods: {
+                async login() {
+                    this.isLoading = true;
+                    try {
+                        const formData = new FormData();
+                        formData.append('username', this.loginForm.email);
+                        formData.append('password', this.loginForm.password);
+
+                        const response = await axios.post('/api/v1/auth/login', formData);
+
+                        localStorage.setItem('token', response.data.access_token);
+                        this.isAuthenticated = true;
+                        await this.initializeApp();
+                    } catch (error) {
+                        alert('Erro ao fazer login: ' + (error.response?.data?.detail || 'Erro desconhecido'));
+                    } finally {
+                        this.isLoading = false;
+                    }
+                },
+
+                async initializeApp() {
+                    await this.loadChats();
+                    this.connectWebSocket();
+                },
+
+                async loadChats() {
+                    this.isLoadingChats = true;
+                    try {
+                        const response = await this.apiCall('/api/v1/chats/');
+                        this.chats = response.data;
+                    } catch (error) {
+                        console.error('Erro ao carregar chats:', error);
+                    } finally {
+                        this.isLoadingChats = false;
+                    }
+                },
+
+                async selectChat(chat) {
+                    this.selectedChat = chat;
+                    await this.loadMessages(chat.id);
+                    this.markMessagesAsRead(chat.id);
+                },
+
+                async loadMessages(chatId) {
+                    this.isLoadingMessages = true;
+                    try {
+                        const response = await this.apiCall(`/api/v1/messages/chat/${chatId}`);
+                        this.messages = response.data.reverse(); // Mostrar mais antigas primeiro
+                        this.$nextTick(() => {
+                            this.scrollToBottom();
+                        });
+                    } catch (error) {
+                        console.error('Erro ao carregar mensagens:', error);
+                    } finally {
+                        this.isLoadingMessages = false;
+                    }
+                },
+
+                async sendMessage() {
+                    if (!this.newMessage.trim() || !this.selectedChat) return;
+
+                    const messageData = {
+                        chat_id: this.selectedChat.id,
+                        content: this.newMessage.trim(),
+                        message_type: 'text',
+                        is_from_customer: false
+                    };
+
+                    try {
+                        const response = await this.apiCall('/api/v1/messages/', messageData, 'POST');
+                        this.messages.push(response.data);
+                        this.newMessage = '';
+                        this.$nextTick(() => {
+                            this.scrollToBottom();
+                        });
+                    } catch (error) {
+                        console.error('Erro ao enviar mensagem:', error);
+                        alert('Erro ao enviar mensagem');
+                    }
+                },
+
+                async assignChat(chatId) {
+                    try {
+                        await this.apiCall(`/api/v1/chats/${chatId}/assign`, {}, 'POST');
+                        await this.loadChats();
+                        if (this.selectedChat?.id === chatId) {
+                            this.selectedChat = this.chats.find(c => c.id === chatId);
+                        }
+                    } catch (error) {
+                        console.error('Erro ao assumir chat:', error);
+                        alert('Erro ao assumir chat');
+                    }
+                },
+
+                async closeChat(chatId) {
+                    if (!confirm('Deseja finalizar esta conversa?')) return;
+
+                    try {
+                        await this.apiCall(`/api/v1/chats/${chatId}`, { status: 'closed' }, 'PUT');
+                        await this.loadChats();
+                        if (this.selectedChat?.id === chatId) {
+                            this.selectedChat = this.chats.find(c => c.id === chatId);
+                        }
+                    } catch (error) {
+                        console.error('Erro ao fechar chat:', error);
+                        alert('Erro ao fechar chat');
+                    }
+                },
+
+                connectWebSocket() {
+                    const wsUrl = `ws://localhost:8000/api/v1/ws/connect/user_${Date.now()}`;
+                    this.websocket = new WebSocket(wsUrl);
+
+                    this.websocket.onmessage = (event) => {
+                        const data = JSON.parse(event.data);
+                        this.handleWebSocketMessage(data);
+                    };
+
+                    this.websocket.onclose = () => {
+                        // Reconectar após 3 segundos
+                        setTimeout(() => {
+                            this.connectWebSocket();
+                        }, 3000);
+                    };
+                },
+
+                handleWebSocketMessage(data) {
+                    if (data.type === 'message_update') {
+                        // Nova mensagem recebida
+                        if (this.selectedChat?.id === parseInt(data.chat_id)) {
+                            this.loadMessages(this.selectedChat.id);
+                        }
+                        this.loadChats(); // Atualizar lista de chats
+                    } else if (data.type === 'typing') {
+                        // Indicador de digitação
+                        if (this.selectedChat?.id === parseInt(data.chat_id)) {
+                            this.isTyping = data.is_typing;
+                        }
+                    }
+                },
+
+                handleTyping() {
+                    if (this.websocket && this.selectedChat) {
+                        this.websocket.send(JSON.stringify({
+                            type: 'typing',
+                            chat_id: this.selectedChat.id,
+                            is_typing: true
+                        }));
+
+                        clearTimeout(this.typingTimeout);
+                        this.typingTimeout = setTimeout(() => {
+                            this.websocket.send(JSON.stringify({
+                                type: 'typing',
+                                chat_id: this.selectedChat.id,
+                                is_typing: false
+                            }));
+                        }, 1000);
+                    }
+                },
+
+                async markMessagesAsRead(chatId) {
+                    // Implementar marcação de mensagens como lidas
+                },
+
+                async apiCall(url, data = null, method = 'GET') {
+                    const token = localStorage.getItem('token');
+                    const config = {
+                        method,
+                        url,
+                        headers: {
+                            'Authorization': `Bearer ${token}`,
+                            'Content-Type': 'application/json'
+                        }
+                    };
+
+                    if (data && (method === 'POST' || method === 'PUT')) {
+                        config.data = data;
+                    }
+
+                    return await axios(config);
+                },
+
+                logout() {
+                    localStorage.removeItem('token');
+                    this.isAuthenticated = false;
+                    this.currentUser = null;
+                    if (this.websocket) {
+                        this.websocket.close();
+                    }
+                },
+
+                scrollToBottom() {
+                    const container = this.$refs.messagesContainer;
+                    if (container) {
+                        container.scrollTop = container.scrollHeight;
+                    }
+                },
+
+                getLastMessageText(chat) {
+                    if (!chat.messages || chat.messages.length === 0) {
+                        return 'Nenhuma mensagem';
+                    }
+                    const lastMessage = chat.messages[chat.messages.length - 1];
+                    if (lastMessage.message_type === 'text') {
+                        return lastMessage.content;
+                    }
+                    return `${lastMessage.message_type.charAt(0).toUpperCase() + lastMessage.message_type.slice(1)}`;
+                },
+
+                getUnreadCount(chat) {
+                    if (!chat.messages) return 0;
+                    return chat.messages.filter(m => m.is_from_customer && !m.read_at).length;
+                },
+
+                getStatusText(status) {
+                    const statusTexts = {
+                        'pending': 'Pendente',
+                        'open': 'Ativo',
+                        'closed': 'Finalizado',
+                        'transferred': 'Transferido'
+                    };
+                    return statusTexts[status] || status;
+                },
+
+                formatTime(timestamp) {
+                    if (!timestamp) return '';
+                    const date = new Date(timestamp);
+                    const now = new Date();
+                    const diff = now - date;
+
+                    if (diff < 60000) { // Menos de 1 minuto
+                        return 'Agora';
+                    } else if (diff < 3600000) { // Menos de 1 hora
+                        return `${Math.floor(diff / 60000)}m`;
+                    } else if (diff < 86400000) { // Menos de 1 dia
+                        return date.toLocaleTimeString('pt-BR', { hour: '2-digit', minute: '2-digit' });
+                    } else {
+                        return date.toLocaleDateString('pt-BR');
+                    }
+                }
+            }
+        }).mount('#app');
+    </script>
+</body>
+</html>

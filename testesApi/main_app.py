@@ -1,1498 +1,1595 @@
 #!/usr/bin/env python3
 """
-Interface de Atendimento Comercial - WhatsApp Business
-Integrada com W-API e Monitor de Webhook
+Interface de Chat Moderna - PyQt6
+Integração completa com Webhook WhatsApp
+Design elegante e funcional para 2025
 """
 
 import sys
 import json
 import requests
+import threading
 import time
 from datetime import datetime
+from typing import Optional, Dict, List
+from pathlib import Path
+
 from PyQt6.QtWidgets import (
     QApplication, QMainWindow, QWidget, QVBoxLayout, QHBoxLayout,
-    QListWidget, QListWidgetItem, QTextEdit, QLineEdit, QPushButton,
-    QLabel, QFrame, QScrollArea, QSplitter, QHeaderView, QToolBar,
-    QStatusBar, QMessageBox, QDialog, QFormLayout, QComboBox,
-    QProgressBar, QTabWidget
+    QTextEdit, QLineEdit, QPushButton, QLabel, QScrollArea,
+    QFrame, QGraphicsDropShadowEffect, QMessageBox, QFileDialog,
+    QMenu, QSystemTrayIcon, QSplitter, QListWidget, QListWidgetItem,
+    QStackedWidget, QTextBrowser, QProgressBar, QSlider, QCheckBox
 )
-from PyQt6.QtCore import Qt, QTimer, QThread, pyqtSignal, QSize
+from PyQt6.QtCore import (
+    Qt, QTimer, QThread, pyqtSignal, QPropertyAnimation,
+    QEasingCurve, QRect, QSize, QUrl, QObject
+)
 from PyQt6.QtGui import (
-    QFont, QPalette, QColor, QPixmap, QIcon, QAction,
-    QPainter, QPen, QBrush
+    QFont, QPixmap, QPainter, QPainterPath, QColor, QIcon,
+    QLinearGradient, QFontMetrics, QDesktopServices, QAction
 )
+from PyQt6.QtNetwork import QNetworkAccessManager, QNetworkRequest, QNetworkReply
 
 
-class WebhookMonitor(QThread):
-    """Thread para monitorar o webhook em segundo plano"""
+class MessageBubble(QFrame):
+    """Balão de mensagem moderna com design elegante"""
 
-    nova_mensagem = pyqtSignal(dict)  # Sinal para nova mensagem
-    status_changed = pyqtSignal(str)  # Sinal para mudança de status
-
-    def __init__(self, webhook_id):
+    def __init__(self, text: str, is_sent: bool = False, timestamp: str = "",
+                 sender_name: str = "", avatar_url: str = "", message_id: str = ""):
         super().__init__()
-        self.webhook_id = webhook_id
-        self.mensagens_processadas = set()
-        self.ultima_verificacao = None
-        self.running = False
+        self.text = text
+        self.is_sent = is_sent
+        self.timestamp = timestamp
+        self.sender_name = sender_name
+        self.avatar_url = avatar_url
+        self.message_id = message_id
+        self.is_read = False
+        self.setup_ui()
+
+    def setup_ui(self):
+        """Configura a interface do balão"""
+        self.setMaximumWidth(400)
+        self.setMinimumHeight(60)
+
+        # Layout principal
+        layout = QHBoxLayout(self)
+        layout.setContentsMargins(15, 10, 15, 10)
+        layout.setSpacing(10)
+
+        # Avatar
+        self.avatar_label = QLabel()
+        self.avatar_label.setFixedSize(35, 35)
+        self.avatar_label.setStyleSheet("""
+            QLabel {
+                border-radius: 17px;
+                background-color: #E3F2FD;
+                border: 2px solid #BBDEFB;
+            }
+        """)
+        self.avatar_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        self.avatar_label.setText(self.sender_name[:1].upper() if self.sender_name else "U")
+
+        # Container da mensagem
+        message_container = QVBoxLayout()
+
+        # Nome do remetente (apenas para mensagens recebidas)
+        if not self.is_sent and self.sender_name:
+            name_label = QLabel(self.sender_name)
+            name_label.setFont(QFont("Segoe UI", 9, QFont.Weight.Bold))
+            name_label.setStyleSheet("color: #1976D2; margin-bottom: 2px;")
+            message_container.addWidget(name_label)
+
+        # Texto da mensagem
+        self.message_label = QLabel(self.text)
+        self.message_label.setWordWrap(True)
+        self.message_label.setFont(QFont("Segoe UI", 10))
+        self.message_label.setStyleSheet("color: #333; line-height: 1.4;")
+        message_container.addWidget(self.message_label)
+
+        # Container inferior (timestamp + status)
+        bottom_layout = QHBoxLayout()
+
+        # Timestamp
+        time_label = QLabel(self.timestamp)
+        time_label.setFont(QFont("Segoe UI", 8))
+        time_label.setStyleSheet("color: #666;")
+        bottom_layout.addWidget(time_label)
+
+        bottom_layout.addStretch()
+
+        # Status de leitura (apenas para mensagens enviadas)
+        if self.is_sent:
+            self.status_label = QLabel("✓✓")
+            self.status_label.setFont(QFont("Segoe UI", 8))
+            self.status_label.setStyleSheet("color: #4CAF50;")
+            bottom_layout.addWidget(self.status_label)
+
+        message_container.addLayout(bottom_layout)
+
+        # Organizar layout baseado no tipo de mensagem
+        if self.is_sent:
+            layout.addStretch()
+            layout.addLayout(message_container)
+            layout.addWidget(self.avatar_label)
+            self.setStyleSheet(self.get_sent_style())
+        else:
+            layout.addWidget(self.avatar_label)
+            layout.addLayout(message_container)
+            layout.addStretch()
+            self.setStyleSheet(self.get_received_style())
+
+        # Sombra
+        self.add_shadow()
+
+    def get_sent_style(self):
+        """Estilo para mensagens enviadas"""
+        return """
+            MessageBubble {
+                background: qlineargradient(x1:0, y1:0, x2:1, y2:1, 
+                    stop:0 #E3F2FD, stop:1 #BBDEFB);
+                border-radius: 20px;
+                border: 1px solid #90CAF9;
+                margin: 5px;
+            }
+        """
+
+    def get_received_style(self):
+        """Estilo para mensagens recebidas"""
+        return """
+            MessageBubble {
+                background: qlineargradient(x1:0, y1:0, x2:1, y2:1, 
+                    stop:0 #F5F5F5, stop:1 #EEEEEE);
+                border-radius: 20px;
+                border: 1px solid #E0E0E0;
+                margin: 5px;
+            }
+        """
+
+    def add_shadow(self):
+        """Adiciona sombra suave ao balão"""
+        shadow = QGraphicsDropShadowEffect()
+        shadow.setBlurRadius(15)
+        shadow.setColor(QColor(0, 0, 0, 30))
+        shadow.setOffset(2, 2)
+        self.setGraphicsEffect(shadow)
+
+    def mark_as_read(self):
+        """Marca mensagem como lida"""
+        if self.is_sent and hasattr(self, 'status_label'):
+            self.is_read = True
+            self.status_label.setStyleSheet("color: #2196F3;")
+
+
+class TypingIndicator(QFrame):
+    """Indicador de digitação animado"""
+
+    def __init__(self):
+        super().__init__()
+        self.setup_ui()
+        self.setup_animation()
+
+    def setup_ui(self):
+        """Configura interface do indicador"""
+        self.setMaximumWidth(200)
+        self.setFixedHeight(40)
+        self.setStyleSheet("""
+            QFrame {
+                background-color: #F5F5F5;
+                border-radius: 20px;
+                border: 1px solid #E0E0E0;
+                margin: 5px;
+            }
+        """)
+
+        layout = QHBoxLayout(self)
+        layout.setContentsMargins(20, 10, 20, 10)
+
+        # Avatar pequeno
+        avatar = QLabel("...")
+        avatar.setFixedSize(20, 20)
+        avatar.setStyleSheet("""
+            QLabel {
+                border-radius: 10px;
+                background-color: #BDBDBD;
+                color: white;
+                font-size: 8px;
+            }
+        """)
+        avatar.setAlignment(Qt.AlignmentFlag.AlignCenter)
+
+        # Pontos animados
+        self.dots_label = QLabel("●●●")
+        self.dots_label.setFont(QFont("Segoe UI", 12))
+        self.dots_label.setStyleSheet("color: #9E9E9E;")
+
+        layout.addWidget(avatar)
+        layout.addWidget(self.dots_label)
+        layout.addStretch()
+
+        # Sombra
+        shadow = QGraphicsDropShadowEffect()
+        shadow.setBlurRadius(10)
+        shadow.setColor(QColor(0, 0, 0, 20))
+        shadow.setOffset(1, 1)
+        self.setGraphicsEffect(shadow)
+
+    def setup_animation(self):
+        """Configura animação dos pontos"""
+        self.timer = QTimer()
+        self.timer.timeout.connect(self.animate_dots)
+        self.dot_states = ["●○○", "●●○", "●●●", "○●●", "○○●", "○○○"]
+        self.current_state = 0
+
+    def start_animation(self):
+        """Inicia animação"""
+        self.timer.start(300)
+
+    def stop_animation(self):
+        """Para animação"""
+        self.timer.stop()
+
+    def animate_dots(self):
+        """Anima os pontos"""
+        self.dots_label.setText(self.dot_states[self.current_state])
+        self.current_state = (self.current_state + 1) % len(self.dot_states)
+
+
+class ChatListItem(QFrame):
+    """Item da lista de conversas"""
+
+    def __init__(self, chat_id: str, name: str, last_message: str,
+                 timestamp: str, unread_count: int = 0, avatar_url: str = ""):
+        super().__init__()
+        self.chat_id = chat_id
+        self.name = name
+        self.last_message = last_message
+        self.timestamp = timestamp
+        self.unread_count = unread_count
+        self.avatar_url = avatar_url
+        self.setup_ui()
+
+    def setup_ui(self):
+        """Configura interface do item"""
+        self.setFixedHeight(70)
+        self.setStyleSheet("""
+            ChatListItem {
+                background-color: transparent;
+                border-bottom: 1px solid #E0E0E0;
+                margin: 0px;
+            }
+            ChatListItem:hover {
+                background-color: #F5F5F5;
+            }
+        """)
+
+        layout = QHBoxLayout(self)
+        layout.setContentsMargins(15, 10, 15, 10)
+        layout.setSpacing(15)
+
+        # Avatar
+        avatar = QLabel()
+        avatar.setFixedSize(45, 45)
+        avatar.setStyleSheet("""
+            QLabel {
+                border-radius: 22px;
+                background-color: #E3F2FD;
+                border: 2px solid #BBDEFB;
+                font-size: 16px;
+                font-weight: bold;
+                color: #1976D2;
+            }
+        """)
+        avatar.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        avatar.setText(self.name[:1].upper() if self.name else "C")
+
+        # Informações do chat
+        info_layout = QVBoxLayout()
+        info_layout.setSpacing(5)
+
+        # Nome e timestamp
+        top_layout = QHBoxLayout()
+        name_label = QLabel(self.name)
+        name_label.setFont(QFont("Segoe UI", 11, QFont.Weight.Bold))
+        name_label.setStyleSheet("color: #212121;")
+
+        time_label = QLabel(self.timestamp)
+        time_label.setFont(QFont("Segoe UI", 9))
+        time_label.setStyleSheet("color: #757575;")
+
+        top_layout.addWidget(name_label)
+        top_layout.addStretch()
+        top_layout.addWidget(time_label)
+
+        # Última mensagem e contador
+        bottom_layout = QHBoxLayout()
+        message_label = QLabel(self.last_message)
+        message_label.setFont(QFont("Segoe UI", 9))
+        message_label.setStyleSheet("color: #616161;")
+
+        if self.unread_count > 0:
+            unread_label = QLabel(str(self.unread_count))
+            unread_label.setFixedSize(20, 20)
+            unread_label.setStyleSheet("""
+                QLabel {
+                    background-color: #4CAF50;
+                    color: white;
+                    border-radius: 10px;
+                    font-size: 8px;
+                    font-weight: bold;
+                }
+            """)
+            unread_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
+            bottom_layout.addWidget(message_label)
+            bottom_layout.addStretch()
+            bottom_layout.addWidget(unread_label)
+        else:
+            bottom_layout.addWidget(message_label)
+            bottom_layout.addStretch()
+
+        info_layout.addLayout(top_layout)
+        info_layout.addLayout(bottom_layout)
+
+        layout.addWidget(avatar)
+        layout.addLayout(info_layout)
+
+
+class ServerDiscovery(QThread):
+    """Thread para descobrir servidores webhook disponíveis"""
+
+    server_found = pyqtSignal(str, str)  # URL, descrição
+    discovery_status = pyqtSignal(str)
+
+    def __init__(self):
+        super().__init__()
+        self.running = True
+        self.discovered_servers = set()
 
     def run(self):
-        """Executa o monitoramento contínuo"""
-        self.running = True
-        self.status_changed.emit("Conectado")
+        """Busca por servidores webhook"""
+        self.discovery_status.emit("🔍 Procurando servidores webhook...")
 
+        # URLs para testar
+        test_urls = [
+            "http://localhost:5000",
+            "http://127.0.0.1:5000",
+            "http://localhost:3000",
+            "http://127.0.0.1:3000",
+        ]
+
+        # Buscar URLs ngrok ativas
+        ngrok_urls = self.discover_ngrok_tunnels()
+        test_urls.extend(ngrok_urls)
+
+        for url in test_urls:
+            if not self.running:
+                break
+
+            try:
+                response = requests.get(f"{url}/status", timeout=3)
+                if response.status_code == 200:
+                    data = response.json()
+                    if url not in self.discovered_servers:
+                        self.discovered_servers.add(url)
+                        description = f"Webhook ativo ({data.get('total_requisicoes', 0)} requisições)"
+                        self.server_found.emit(url, description)
+
+            except requests.RequestException:
+                continue
+
+        if not self.discovered_servers:
+            self.discovery_status.emit("❌ Nenhum servidor webhook encontrado")
+        else:
+            self.discovery_status.emit(f"✅ {len(self.discovered_servers)} servidor(es) encontrado(s)")
+
+    def discover_ngrok_tunnels(self) -> List[str]:
+        """Descobre túneis ngrok ativos"""
+        urls = []
+        try:
+            # Tentar acessar API local do ngrok
+            response = requests.get("http://127.0.0.1:4040/api/tunnels", timeout=2)
+            if response.status_code == 200:
+                data = response.json()
+                for tunnel in data.get('tunnels', []):
+                    public_url = tunnel.get('public_url', '')
+                    if public_url and 'https://' in public_url:
+                        urls.append(public_url)
+        except:
+            pass
+        return urls
+
+    def stop(self):
+        """Para a descoberta"""
+        self.running = False
+
+
+class WebhookListener(QThread):
+    """Thread para escutar o webhook"""
+
+    message_received = pyqtSignal(dict)
+    status_received = pyqtSignal(dict)
+    connection_status = pyqtSignal(bool, str)
+    new_chat_created = pyqtSignal(str, str, str)  # chat_id, name, last_message
+
+    def __init__(self, webhook_url: str):
+        super().__init__()
+        self.webhook_url = webhook_url
+        self.running = True
+        self.last_request_count = 0
+        self.processed_messages = set()
+
+    def run(self):
+        """Monitora o webhook continuamente"""
         while self.running:
             try:
-                mensagens_novas = self.buscar_mensagens_novas()
+                # Verifica se há novas mensagens
+                response = requests.get(f"{self.webhook_url}/requisicoes", timeout=5)
+                if response.status_code == 200:
+                    data = response.json()
+                    current_count = data.get('total', 0)
+                    self.connection_status.emit(True, f"Conectado ({current_count} req)")
 
-                if mensagens_novas:
-                    for msg in mensagens_novas:
-                        self.nova_mensagem.emit(msg['data'])
+                    # Processar apenas novas requisições
+                    if current_count > self.last_request_count:
+                        new_requests = data.get('requisicoes', [])[-5:]  # Últimas 5
+                        for req in new_requests:
+                            if req.get('json'):
+                                self.process_webhook_data(req['json'])
 
-                time.sleep(3)  # Verifica a cada 3 segundos
+                        self.last_request_count = current_count
+                else:
+                    self.connection_status.emit(False, f"Erro HTTP {response.status_code}")
 
+            except requests.RequestException as e:
+                self.connection_status.emit(False, f"Conexão perdida")
             except Exception as e:
-                self.status_changed.emit(f"Erro: {str(e)[:20]}")
-                time.sleep(10)  # Espera mais tempo se houver erro
+                self.connection_status.emit(False, f"Erro: {str(e)}")
+
+            time.sleep(1)  # Verifica a cada 1 segundo para ser mais responsivo
+
+    def process_webhook_data(self, data: dict):
+        """Processa dados do webhook"""
+        message_id = data.get('messageId', '')
+
+        # Evitar processamento duplicado
+        if message_id and message_id in self.processed_messages:
+            return
+
+        if message_id:
+            self.processed_messages.add(message_id)
+            # Manter apenas os últimos 1000 IDs para evitar vazamento de memória
+            if len(self.processed_messages) > 1000:
+                self.processed_messages = set(list(self.processed_messages)[-500:])
+
+        if data.get('event') == 'webhookDelivery':
+            self.message_received.emit(data)
+        elif data.get('event') == 'webhookStatus':
+            self.status_received.emit(data)
 
     def stop(self):
         """Para o monitoramento"""
         self.running = False
-        self.status_changed.emit("Desconectado")
 
-    def buscar_mensagens_novas(self):
-        """Busca mensagens novas no webhook"""
-        try:
-            url = f"https://webhook.site/token/{self.webhook_id}/requests"
-            response = requests.get(url, timeout=5)
 
-            if response.status_code == 200:
-                data = response.json()
-                requests_data = data.get('data', [])
-                mensagens_novas = []
-
-                for request in requests_data:
-                    request_id = request.get('uuid')
-
-                    if request_id and request_id not in self.mensagens_processadas:
-                        content = request.get('content')
-
-                        if content and isinstance(content, str):
-                            try:
-                                message_data = json.loads(content)
-
-                                if self.eh_mensagem_whatsapp(message_data):
-                                    mensagens_novas.append({
-                                        'id': request_id,
-                                        'data': message_data,
-                                        'timestamp': request.get('created_at', '')
-                                    })
-                                    self.mensagens_processadas.add(request_id)
-                            except json.JSONDecodeError:
-                                pass
-
-                self.ultima_verificacao = datetime.now()
-                return mensagens_novas
-
-            return []
-
-        except Exception as e:
-            print(f"Erro ao buscar mensagens: {e}")
-            return []
-
-    def eh_mensagem_whatsapp(self, data):
-        """Verifica se é uma mensagem válida do WhatsApp"""
-        if isinstance(data, dict):
-            return any([
-                data.get('event') == 'webhookReceived',
-                data.get('event') == 'message',
-                data.get('type') == 'message',
-                'instanceId' in data,
-                'msgContent' in data,
-                'sender' in data and 'chat' in data,
-                'messages' in data,
-                'entry' in data
-            ])
-        return False
-
-
-class WAPIClient:
-    """Cliente para a W-API"""
-
-    def __init__(self, instance_id, token):
-        self.instance_id = instance_id
-        self.token = token
-        self.base_url = "https://api.w-api.app/v1"
-        self.headers = {"Authorization": f"Bearer {token}"}
-
-    def buscar_chats(self, per_page=20, page=1):
-        """Busca lista de chats da W-API"""
-        try:
-            url = f"{self.base_url}/chats/fetch-chats"
-            params = {
-                "instanceId": self.instance_id,
-                "perPage": per_page,
-                "page": page
-            }
-
-            response = requests.get(url, headers=self.headers, params=params, timeout=10)
-
-            if response.status_code == 200:
-                return response.json()
-            else:
-                print(f"Erro ao buscar chats: {response.status_code}")
-                return None
-
-        except Exception as e:
-            print(f"Erro na requisição: {e}")
-            return None
-
-    def enviar_mensagem(self, chat_id, mensagem):
-        """Envia mensagem via W-API"""
-        try:
-            url = f"{self.base_url}/messages/send-text"
-            data = {
-                "instanceId": self.instance_id,
-                "chatId": chat_id,
-                "text": mensagem
-            }
-
-            response = requests.post(url, headers=self.headers, json=data, timeout=10)
-            return response.status_code == 200
-
-        except Exception as e:
-            print(f"Erro ao enviar mensagem: {e}")
-            return False
-
-
-class ConversaItem(QWidget):
-    """Widget personalizado para item da lista de conversas"""
-
-    def __init__(self, nome, ultima_mensagem, horario, chat_id, nao_lidas=0):
-        super().__init__()
-        self.nome = nome
-        self.chat_id = chat_id
-        self.nao_lidas = nao_lidas
-        self.setup_ui(nome, ultima_mensagem, horario, nao_lidas)
-
-    def setup_ui(self, nome, ultima_mensagem, horario, nao_lidas):
-        layout = QHBoxLayout()
-        layout.setContentsMargins(15, 10, 15, 10)
-        layout.setSpacing(12)
-
-        # Avatar (círculo colorido com inicial)
-        avatar = QLabel()
-        avatar.setFixedSize(50, 50)
-        avatar.setStyleSheet(f"""
-            QLabel {{
-                background-color: #25D366;
-                border-radius: 25px;
-                color: white;
-                font-weight: bold;
-                font-size: 18px;
-            }}
-        """)
-        avatar.setAlignment(Qt.AlignmentFlag.AlignCenter)
-        avatar.setText(nome[0].upper() if nome else "?")
-
-        # Informações da conversa
-        info_layout = QVBoxLayout()
-        info_layout.setSpacing(4)
-
-        # Linha superior: Nome e horário
-        linha_superior = QHBoxLayout()
-        linha_superior.setContentsMargins(0, 0, 0, 0)
-
-        label_nome = QLabel(nome)
-        label_nome.setFont(QFont("Segoe UI", 11, QFont.Weight.Bold))
-        label_nome.setStyleSheet("color: #000000;")
-
-        label_horario = QLabel(horario)
-        label_horario.setFont(QFont("Segoe UI", 9))
-        label_horario.setStyleSheet("color: #667781;")
-        label_horario.setAlignment(Qt.AlignmentFlag.AlignRight)
-
-        linha_superior.addWidget(label_nome)
-        linha_superior.addStretch()
-        linha_superior.addWidget(label_horario)
-
-        # Linha inferior: Última mensagem e contador
-        linha_inferior = QHBoxLayout()
-        linha_inferior.setContentsMargins(0, 0, 0, 0)
-
-        label_mensagem = QLabel(ultima_mensagem)
-        label_mensagem.setFont(QFont("Segoe UI", 9))
-        label_mensagem.setStyleSheet("color: #667781;")
-        label_mensagem.setWordWrap(True)
-
-        # Contador de mensagens não lidas
-        if nao_lidas > 0:
-            contador = QLabel(str(nao_lidas))
-            contador.setFixedSize(20, 20)
-            contador.setStyleSheet("""
-                QLabel {
-                    background-color: #25D366;
-                    border-radius: 10px;
-                    color: white;
-                    font-size: 10px;
-                    font-weight: bold;
-                }
-            """)
-            contador.setAlignment(Qt.AlignmentFlag.AlignCenter)
-            linha_inferior.addWidget(label_mensagem)
-            linha_inferior.addStretch()
-            linha_inferior.addWidget(contador)
-        else:
-            linha_inferior.addWidget(label_mensagem)
-
-        info_layout.addLayout(linha_superior)
-        info_layout.addLayout(linha_inferior)
-
-        layout.addWidget(avatar)
-        layout.addLayout(info_layout, 1)
-
-        self.setLayout(layout)
-        self.setFixedHeight(80)
-
-        # Estilo hover
-        self.setStyleSheet("""
-            ConversaItem:hover {
-                background-color: #F5F6F6;
-            }
-        """)
-
-
-class MensagemWidget(QWidget):
-    """Widget para exibir uma mensagem individual"""
-
-    def __init__(self, texto, enviada_por_mim=False, horario="", tipo_midia=None, sender_name=""):
-        super().__init__()
-        self.enviada_por_mim = enviada_por_mim
-        self.setup_ui(texto, horario, tipo_midia, sender_name)
-
-    def setup_ui(self, texto, horario, tipo_midia, sender_name):
-        layout = QHBoxLayout()
-        layout.setContentsMargins(10, 5, 10, 5)
-
-        # Container da mensagem
-        container = QFrame()
-        container.setMaximumWidth(400)
-        container_layout = QVBoxLayout()
-        container_layout.setContentsMargins(12, 8, 12, 8)
-        container_layout.setSpacing(4)
-
-        # Nome do remetente (apenas para mensagens recebidas)
-        if not self.enviada_por_mim and sender_name:
-            label_sender = QLabel(sender_name)
-            label_sender.setFont(QFont("Segoe UI", 9, QFont.Weight.Bold))
-            label_sender.setStyleSheet("color: #25D366;")
-            container_layout.addWidget(label_sender)
-
-        # Ícone de mídia se houver
-        if tipo_midia:
-            icone_midia = QLabel()
-            if tipo_midia == "image":
-                icone_midia.setText("🖼️ Imagem")
-            elif tipo_midia == "video":
-                icone_midia.setText("🎥 Vídeo")
-            elif tipo_midia == "audio":
-                icone_midia.setText("🎵 Áudio")
-            elif tipo_midia == "document":
-                icone_midia.setText("📄 Documento")
-
-            icone_midia.setFont(QFont("Segoe UI", 9))
-            icone_midia.setStyleSheet("color: #667781; font-style: italic;")
-            container_layout.addWidget(icone_midia)
-
-        # Texto da mensagem
-        if texto:
-            label_texto = QLabel(texto)
-            label_texto.setWordWrap(True)
-            label_texto.setFont(QFont("Segoe UI", 10))
-            container_layout.addWidget(label_texto)
-
-        # Horário
-        if horario:
-            label_horario = QLabel(horario)
-            label_horario.setFont(QFont("Segoe UI", 8))
-            label_horario.setStyleSheet("color: #667781;")
-            label_horario.setAlignment(Qt.AlignmentFlag.AlignRight)
-            container_layout.addWidget(label_horario)
-
-        container.setLayout(container_layout)
-
-        # Estilo baseado em quem enviou
-        if self.enviada_por_mim:
-            container.setStyleSheet("""
-                QFrame {
-                    background-color: #DCF8C6;
-                    border-radius: 8px;
-                    border: none;
-                }
-            """)
-            layout.addStretch()
-            layout.addWidget(container)
-        else:
-            container.setStyleSheet("""
-                QFrame {
-                    background-color: #FFFFFF;
-                    border-radius: 8px;
-                    border: 1px solid #E0E0E0;
-                }
-            """)
-            layout.addWidget(container)
-            layout.addStretch()
-
-        self.setLayout(layout)
-
-
-class AreaChat(QWidget):
-    """Área principal do chat"""
-
-    def __init__(self, wapi_client=None):
-        super().__init__()
-        self.conversa_atual = None
-        self.wapi_client = wapi_client
-        self.setup_ui()
-
-    def setup_ui(self):
-        layout = QVBoxLayout()
-        layout.setContentsMargins(0, 0, 0, 0)
-        layout.setSpacing(0)
-
-        # Header do chat
-        self.header = QFrame()
-        self.header.setFixedHeight(70)
-        self.header.setStyleSheet("""
-            QFrame {
-                background-color: #F0F2F5;
-                border-bottom: 1px solid #E0E0E0;
-            }
-        """)
-
-        header_layout = QHBoxLayout()
-        header_layout.setContentsMargins(20, 10, 20, 10)
-
-        # Avatar do contato
-        self.avatar_contato = QLabel()
-        self.avatar_contato.setFixedSize(45, 45)
-        self.avatar_contato.setStyleSheet("""
-            QLabel {
-                background-color: #25D366;
-                border-radius: 22px;
-                color: white;
-                font-weight: bold;
-                font-size: 16px;
-            }
-        """)
-        self.avatar_contato.setAlignment(Qt.AlignmentFlag.AlignCenter)
-
-        # Info do contato
-        info_contato = QVBoxLayout()
-        info_contato.setSpacing(2)
-
-        self.nome_contato = QLabel("Selecione uma conversa")
-        self.nome_contato.setFont(QFont("Segoe UI", 12, QFont.Weight.Bold))
-
-        self.status_contato = QLabel("")
-        self.status_contato.setFont(QFont("Segoe UI", 9))
-        self.status_contato.setStyleSheet("color: #667781;")
-
-        info_contato.addWidget(self.nome_contato)
-        info_contato.addWidget(self.status_contato)
-
-        header_layout.addWidget(self.avatar_contato)
-        header_layout.addLayout(info_contato)
-        header_layout.addStretch()
-
-        self.header.setLayout(header_layout)
-
-        # Área de mensagens
-        self.scroll_area = QScrollArea()
-        self.scroll_area.setWidgetResizable(True)
-        self.scroll_area.setStyleSheet("""
-            QScrollArea {
-                background-color: #E5DDD5;
-                border: none;
-            }
-        """)
-
-        self.mensagens_widget = QWidget()
-        self.mensagens_layout = QVBoxLayout()
-        self.mensagens_layout.setContentsMargins(0, 10, 0, 10)
-        self.mensagens_layout.setSpacing(5)
-        self.mensagens_widget.setLayout(self.mensagens_layout)
-
-        self.scroll_area.setWidget(self.mensagens_widget)
-
-        # Área de input
-        input_frame = QFrame()
-        input_frame.setFixedHeight(70)
-        input_frame.setStyleSheet("""
-            QFrame {
-                background-color: #F0F2F5;
-                border-top: 1px solid #E0E0E0;
-            }
-        """)
-
-        input_layout = QHBoxLayout()
-        input_layout.setContentsMargins(15, 10, 15, 10)
-
-        # Campo de texto
-        self.input_mensagem = QLineEdit()
-        self.input_mensagem.setPlaceholderText("Digite uma mensagem...")
-        self.input_mensagem.setFont(QFont("Segoe UI", 11))
-        self.input_mensagem.setStyleSheet("""
-            QLineEdit {
-                background-color: white;
-                border: 1px solid #E0E0E0;
-                border-radius: 20px;
-                padding: 10px 15px;
-            }
-            QLineEdit:focus {
-                border: 1px solid #25D366;
-            }
-        """)
-
-        # Botão enviar
-        self.btn_enviar = QPushButton("Enviar")
-        self.btn_enviar.setFont(QFont("Segoe UI", 10, QFont.Weight.Bold))
-        self.btn_enviar.setStyleSheet("""
-            QPushButton {
-                background-color: #25D366;
-                color: white;
-                border: none;
-                border-radius: 20px;
-                padding: 10px 20px;
-            }
-            QPushButton:hover {
-                background-color: #20BD5F;
-            }
-            QPushButton:pressed {
-                background-color: #1FAD58;
-            }
-        """)
-
-        input_layout.addWidget(self.input_mensagem)
-        input_layout.addWidget(self.btn_enviar)
-        input_frame.setLayout(input_layout)
-
-        # Conectar eventos
-        self.input_mensagem.returnPressed.connect(self.enviar_mensagem)
-        self.btn_enviar.clicked.connect(self.enviar_mensagem)
-
-        layout.addWidget(self.header)
-        layout.addWidget(self.scroll_area, 1)
-        layout.addWidget(input_frame)
-
-        self.setLayout(layout)
-
-    def carregar_conversa(self, nome, chat_id):
-        """Carrega uma conversa específica"""
-        self.conversa_atual = {"nome": nome, "chat_id": chat_id}
-
-        # Atualizar header
-        self.nome_contato.setText(nome)
-        self.status_contato.setText(chat_id)
-        self.avatar_contato.setText(nome[0].upper() if nome else "?")
-
-        # Limpar mensagens anteriores
-        self.limpar_mensagens()
-
-        # Adicionar mensagem de início da conversa
-        self.adicionar_mensagem(
-            f"Conversa iniciada com {nome}",
-            False,
-            datetime.now().strftime("%H:%M"),
-            sender_name="Sistema"
-        )
-
-    def processar_mensagem_webhook(self, data):
-        """Processa mensagem recebida do webhook"""
-        try:
-            # Extrair informações da mensagem
-            sender = data.get('sender', {})
-            sender_name = sender.get('pushName', sender.get('name', 'Contato'))
-            chat = data.get('chat', {})
-            chat_id = chat.get('id', '')
-            from_me = data.get('fromMe', False)
-
-            # Verificar se é da conversa atual
-            if self.conversa_atual and chat_id == self.conversa_atual['chat_id']:
-                # Extrair texto da mensagem
-                texto = self.extrair_texto_mensagem(data)
-                tipo_midia = self.extrair_tipo_midia(data)
-
-                # Extrair timestamp
-                moment = data.get('moment', data.get('timestamp'))
-                horario = ""
-                if moment:
-                    try:
-                        if isinstance(moment, (int, float)):
-                            dt = datetime.fromtimestamp(moment)
-                            horario = dt.strftime("%H:%M")
-                    except:
-                        horario = datetime.now().strftime("%H:%M")
-
-                # Adicionar mensagem
-                self.adicionar_mensagem(
-                    texto or "",
-                    from_me,
-                    horario,
-                    tipo_midia,
-                    sender_name if not from_me else ""
-                )
-
-        except Exception as e:
-            print(f"Erro ao processar mensagem: {e}")
-
-    def extrair_texto_mensagem(self, data):
-        """Extrai o texto da mensagem dos dados do webhook"""
-        msg_content = data.get('msgContent', data.get('message', data.get('content', {})))
-
-        # Tentar campo 'text' diretamente
-        if data.get('text'):
-            return data.get('text')
-
-        # Tentar campo 'body' diretamente
-        if data.get('body'):
-            return data.get('body')
-
-        if isinstance(msg_content, str):
-            return msg_content
-        elif isinstance(msg_content, dict):
-            if 'conversation' in msg_content:
-                return msg_content['conversation']
-            elif 'text' in msg_content:
-                return msg_content['text']
-
-        return None
-
-    def extrair_tipo_midia(self, data):
-        """Extrai o tipo de mídia da mensagem"""
-        msg_content = data.get('msgContent', data.get('message', data.get('content', {})))
-
-        if isinstance(msg_content, dict):
-            if 'imageMessage' in msg_content:
-                return 'image'
-            elif 'videoMessage' in msg_content:
-                return 'video'
-            elif 'audioMessage' in msg_content:
-                return 'audio'
-            elif 'documentMessage' in msg_content:
-                return 'document'
-
-        return None
-
-    def limpar_mensagens(self):
-        """Remove todas as mensagens da área de chat"""
-        while self.mensagens_layout.count():
-            child = self.mensagens_layout.takeAt(0)
-            if child.widget():
-                child.widget().deleteLater()
-
-    def adicionar_mensagem(self, texto, enviada_por_mim=True, horario="", tipo_midia=None, sender_name=""):
-        """Adiciona uma nova mensagem ao chat"""
-        if not horario:
-            horario = datetime.now().strftime("%H:%M")
-
-        mensagem = MensagemWidget(texto, enviada_por_mim, horario, tipo_midia, sender_name)
-        self.mensagens_layout.addWidget(mensagem)
-
-        # Scroll para baixo
-        QTimer.singleShot(100, self.scroll_para_baixo)
-
-    def scroll_para_baixo(self):
-        """Faz scroll para a última mensagem"""
-        scrollbar = self.scroll_area.verticalScrollBar()
-        scrollbar.setValue(scrollbar.maximum())
-
-    def enviar_mensagem(self):
-        """Envia uma nova mensagem"""
-        texto = self.input_mensagem.text().strip()
-        if not texto or not self.conversa_atual:
-            return
-
-        # Adicionar mensagem na interface
-        self.adicionar_mensagem(texto, True)
-
-        # Enviar via W-API se disponível
-        if self.wapi_client:
-            sucesso = self.wapi_client.enviar_mensagem(
-                self.conversa_atual['chat_id'],
-                texto
-            )
-            if not sucesso:
-                self.adicionar_mensagem(
-                    "❌ Erro ao enviar mensagem",
-                    False,
-                    datetime.now().strftime("%H:%M"),
-                    sender_name="Sistema"
-                )
-
-        # Limpar input
-        self.input_mensagem.clear()
-
-
-class ListaConversas(QListWidget):
-    """Lista de conversas personalizada"""
-
-    conversa_selecionada = pyqtSignal(str, str)  # nome, chat_id
-
-    def __init__(self, wapi_client=None):
-        super().__init__()
-        self.wapi_client = wapi_client
-        self.setup_ui()
-        self.carregar_chats()
-
-    def setup_ui(self):
-        self.setStyleSheet("""
-            QListWidget {
-                background-color: white;
-                border: none;
-                outline: none;
-            }
-            QListWidget::item {
-                border-bottom: 1px solid #F0F2F5;
-                padding: 0px;
-            }
-            QListWidget::item:selected {
-                background-color: #E7F3FF;
-            }
-            QListWidget::item:hover {
-                background-color: #F5F6F6;
-            }
-        """)
-
-        self.itemClicked.connect(self.on_conversa_clicada)
-
-    def carregar_chats(self):
-        """Carrega chats da W-API"""
-        if not self.wapi_client:
-            self.carregar_conversas_exemplo()
-            return
-
-        try:
-            dados = self.wapi_client.buscar_chats(per_page=50)
-
-            if dados and 'chats' in dados:
-                self.clear()  # Limpar lista anterior
-
-                for chat in dados['chats']:
-                    nome = chat.get('name') or 'Sem Nome'
-                    chat_id = chat.get('id')
-
-                    # Converter timestamp para horário legível
-                    last_msg_time = chat.get('lastMessageTime')
-                    horario = ""
-                    if last_msg_time:
-                        try:
-                            dt = datetime.fromtimestamp(last_msg_time)
-                            horario = dt.strftime("%H:%M")
-                        except:
-                            horario = "N/A"
-
-                    self.adicionar_conversa(
-                        nome,
-                        chat_id,
-                        "Última mensagem...",  # Poderia buscar a última mensagem
-                        horario,
-                        0  # Número de não lidas (não disponível na API atual)
-                    )
-            else:
-                self.carregar_conversas_exemplo()
-
-        except Exception as e:
-            print(f"Erro ao carregar chats: {e}")
-            self.carregar_conversas_exemplo()
-
-    def carregar_conversas_exemplo(self):
-        """Carrega conversas de exemplo se não conseguir da API"""
-        conversas = [
-            {"nome": "𝓣𝓱𝓪𝔂𝓷𝓪🍃", "chat_id": "556999267344@s.whatsapp.net", "ultima_msg": "Caracas isso é muit9 bom",
-             "horario": "00:03", "nao_lidas": 2},
-            {"nome": "João Silva", "chat_id": "5511987654321@s.whatsapp.net",
-             "ultima_msg": "Obrigado pelo atendimento!", "horario": "23:45", "nao_lidas": 0},
-            {"nome": "Maria Santos", "chat_id": "5511876543210@s.whatsapp.net",
-             "ultima_msg": "Quando vocês abrem amanhã?", "horario": "22:30", "nao_lidas": 1},
-        ]
-
-        for conversa in conversas:
-            self.adicionar_conversa(
-                conversa["nome"],
-                conversa["chat_id"],
-                conversa["ultima_msg"],
-                conversa["horario"],
-                conversa["nao_lidas"]
-            )
-
-    def adicionar_conversa(self, nome, chat_id, ultima_msg, horario, nao_lidas=0):
-        """Adiciona uma nova conversa à lista"""
-        item = QListWidgetItem()
-        widget = ConversaItem(nome, ultima_msg, horario, chat_id, nao_lidas)
-
-        item.setSizeHint(widget.sizeHint())
-        self.addItem(item)
-        self.setItemWidget(item, widget)
-
-    def on_conversa_clicada(self, item):
-        """Callback quando uma conversa é clicada"""
-        widget = self.itemWidget(item)
-        if widget:
-            self.conversa_selecionada.emit(widget.nome, widget.chat_id)
-
-    def atualizar_conversa(self, chat_id, nova_mensagem):
-        """Atualiza uma conversa com nova mensagem"""
-        for i in range(self.count()):
-            item = self.item(i)
-            widget = self.itemWidget(item)
-            if widget and widget.chat_id == chat_id:
-                # Aqui poderia atualizar a última mensagem e horário
-                break
-
-
-class ConfiguracaoDialog(QDialog):
-    """Dialog para configuração da W-API e Webhook"""
-
-    def __init__(self, parent=None):
-        super().__init__(parent)
-        self.setup_ui()
-
-    def setup_ui(self):
-        self.setWindowTitle("Configurações")
-        self.setFixedSize(500, 400)
-
-        layout = QVBoxLayout()
-        layout.setContentsMargins(20, 20, 20, 20)
-        layout.setSpacing(15)
-
-        # Título
-        titulo = QLabel("Configurações do Sistema")
-        titulo.setFont(QFont("Segoe UI", 14, QFont.Weight.Bold))
-        titulo.setAlignment(Qt.AlignmentFlag.AlignCenter)
-        titulo.setStyleSheet("color: #25D366; margin-bottom: 10px;")
-        layout.addWidget(titulo)
-
-        # Abas de configuração
-        tabs = QTabWidget()
-        tabs.setStyleSheet("""
-            QTabWidget::pane {
-                border: 1px solid #E0E0E0;
-                border-radius: 5px;
-                margin-top: 5px;
-            }
-            QTabBar::tab {
-                background-color: #F0F2F5;
-                padding: 8px 15px;
-                margin-right: 2px;
-                border-top-left-radius: 5px;
-                border-top-right-radius: 5px;
-            }
-            QTabBar::tab:selected {
-                background-color: #25D366;
-                color: white;
-            }
-        """)
-
-        # Aba W-API
-        wapi_tab = QWidget()
-        wapi_layout = QVBoxLayout()
-        wapi_layout.setSpacing(15)
-
-        # Seção Instance ID
-        instance_group = QFrame()
-        instance_group.setStyleSheet("QFrame { border: 1px solid #E0E0E0; border-radius: 5px; padding: 10px; }")
-        instance_layout = QVBoxLayout()
-
-        instance_label = QLabel("Instance ID")
-        instance_label.setFont(QFont("Segoe UI", 10, QFont.Weight.Bold))
-
-        self.instance_id_input = QLineEdit()
-        self.instance_id_input.setText("3B6XIW-ZTS923-GEAY6V")
-        self.instance_id_input.setStyleSheet("""
-            QLineEdit {
-                padding: 8px;
-                border: 1px solid #E0E0E0;
-                border-radius: 4px;
-                font-family: 'Courier New', monospace;
-            }
-            QLineEdit:focus {
-                border: 2px solid #25D366;
-            }
-        """)
-
-        instance_layout.addWidget(instance_label)
-        instance_layout.addWidget(self.instance_id_input)
-        instance_group.setLayout(instance_layout)
-
-        # Seção Token
-        token_group = QFrame()
-        token_group.setStyleSheet("QFrame { border: 1px solid #E0E0E0; border-radius: 5px; padding: 10px; }")
-        token_layout = QVBoxLayout()
-
-        token_label = QLabel("Token de Acesso")
-        token_label.setFont(QFont("Segoe UI", 10, QFont.Weight.Bold))
-
-        self.token_input = QLineEdit()
-        self.token_input.setText("Q8EOH07SJkXhg4iT6Qmhz1BJdLl8nL9WF")
-        self.token_input.setEchoMode(QLineEdit.EchoMode.Password)
-        self.token_input.setStyleSheet("""
-            QLineEdit {
-                padding: 8px;
-                border: 1px solid #E0E0E0;
-                border-radius: 4px;
-                font-family: 'Courier New', monospace;
-            }
-            QLineEdit:focus {
-                border: 2px solid #25D366;
-            }
-        """)
-
-        # Botão para mostrar/ocultar token
-        self.btn_mostrar_token = QPushButton("👁️ Mostrar")
-        self.btn_mostrar_token.setFixedWidth(80)
-        self.btn_mostrar_token.clicked.connect(self.toggle_token_visibility)
-        self.btn_mostrar_token.setStyleSheet("""
-            QPushButton {
-                background-color: #F0F2F5;
-                border: 1px solid #E0E0E0;
-                border-radius: 4px;
-                padding: 5px;
-            }
-            QPushButton:hover {
-                background-color: #E0E0E0;
-            }
-        """)
-
-        token_input_layout = QHBoxLayout()
-        token_input_layout.addWidget(self.token_input)
-        token_input_layout.addWidget(self.btn_mostrar_token)
-
-        token_layout.addWidget(token_label)
-        token_layout.addLayout(token_input_layout)
-        token_group.setLayout(token_layout)
-
-        # Informações adicionais
-        info_label = QLabel("ℹ️ Estas credenciais são usadas para acessar a W-API")
-        info_label.setStyleSheet("color: #667781; font-style: italic; margin-top: 10px;")
-
-        wapi_layout.addWidget(instance_group)
-        wapi_layout.addWidget(token_group)
-        wapi_layout.addWidget(info_label)
-        wapi_layout.addStretch()
-
-        wapi_tab.setLayout(wapi_layout)
-        tabs.addTab(wapi_tab, "🔌 W-API")
-
-        # Aba Webhook
-        webhook_tab = QWidget()
-        webhook_layout = QVBoxLayout()
-        webhook_layout.setSpacing(15)
-
-        # Seção Webhook ID
-        webhook_group = QFrame()
-        webhook_group.setStyleSheet("QFrame { border: 1px solid #E0E0E0; border-radius: 5px; padding: 10px; }")
-        webhook_group_layout = QVBoxLayout()
-
-        webhook_label = QLabel("Webhook ID")
-        webhook_label.setFont(QFont("Segoe UI", 10, QFont.Weight.Bold))
-
-        self.webhook_id_input = QLineEdit()
-        self.webhook_id_input.setText("0e6e92fd-c357-44e4-b1e5-067d6ae4cd0d")
-        self.webhook_id_input.setStyleSheet("""
-            QLineEdit {
-                padding: 8px;
-                border: 1px solid #E0E0E0;
-                border-radius: 4px;
-                font-family: 'Courier New', monospace;
-            }
-            QLineEdit:focus {
-                border: 2px solid #25D366;
-            }
-        """)
-
-        webhook_group_layout.addWidget(webhook_label)
-        webhook_group_layout.addWidget(self.webhook_id_input)
-        webhook_group.setLayout(webhook_group_layout)
-
-        # Instruções do Webhook
-        instrucoes_webhook = QLabel("""
-📋 <b>Como configurar o Webhook:</b><br><br>
-1. Acesse <a href="https://webhook.site">webhook.site</a><br>
-2. Copie o ID que aparece na URL<br>
-3. Configure na W-API para enviar para o webhook<br>
-4. Cole o ID aqui
-        """)
-        instrucoes_webhook.setOpenExternalLinks(True)
-        instrucoes_webhook.setWordWrap(True)
-        instrucoes_webhook.setStyleSheet("""
-            QLabel {
-                background-color: #F8F9FA;
-                border: 1px solid #E0E0E0;
-                border-radius: 5px;
-                padding: 15px;
-                color: #333;
-            }
-        """)
-
-        webhook_layout.addWidget(webhook_group)
-        webhook_layout.addWidget(instrucoes_webhook)
-        webhook_layout.addStretch()
-
-        webhook_tab.setLayout(webhook_layout)
-        tabs.addTab(webhook_tab, "🔗 Webhook")
-
-        # Aba Avançado
-        avancado_tab = QWidget()
-        avancado_layout = QVBoxLayout()
-        avancado_layout.setSpacing(15)
-
-        # Configurações de tempo
-        tempo_group = QFrame()
-        tempo_group.setStyleSheet("QFrame { border: 1px solid #E0E0E0; border-radius: 5px; padding: 10px; }")
-        tempo_layout = QVBoxLayout()
-
-        tempo_label = QLabel("Configurações de Tempo")
-        tempo_label.setFont(QFont("Segoe UI", 10, QFont.Weight.Bold))
-
-        # Intervalo de verificação do webhook
-        intervalo_layout = QHBoxLayout()
-        intervalo_layout.addWidget(QLabel("Intervalo de verificação:"))
-
-        self.intervalo_input = QComboBox()
-        self.intervalo_input.addItems(["1 segundo", "3 segundos", "5 segundos", "10 segundos"])
-        self.intervalo_input.setCurrentText("3 segundos")
-
-        intervalo_layout.addWidget(self.intervalo_input)
-        intervalo_layout.addStretch()
-
-        tempo_layout.addWidget(tempo_label)
-        tempo_layout.addLayout(intervalo_layout)
-        tempo_group.setLayout(tempo_layout)
-
-        # Configurações de exibição
-        exibicao_group = QFrame()
-        exibicao_group.setStyleSheet("QFrame { border: 1px solid #E0E0E0; border-radius: 5px; padding: 10px; }")
-        exibicao_layout = QVBoxLayout()
-
-        exibicao_label = QLabel("Configurações de Exibição")
-        exibicao_label.setFont(QFont("Segoe UI", 10, QFont.Weight.Bold))
-
-        # Máximo de conversas
-        max_conversas_layout = QHBoxLayout()
-        max_conversas_layout.addWidget(QLabel("Máximo de conversas:"))
-
-        self.max_conversas_input = QComboBox()
-        self.max_conversas_input.addItems(["20", "50", "100", "200"])
-        self.max_conversas_input.setCurrentText("50")
-
-        max_conversas_layout.addWidget(self.max_conversas_input)
-        max_conversas_layout.addStretch()
-
-        exibicao_layout.addWidget(exibicao_label)
-        exibicao_layout.addLayout(max_conversas_layout)
-        exibicao_group.setLayout(exibicao_layout)
-
-        avancado_layout.addWidget(tempo_group)
-        avancado_layout.addWidget(exibicao_group)
-        avancado_layout.addStretch()
-
-        avancado_tab.setLayout(avancado_layout)
-        tabs.addTab(avancado_tab, "⚙️ Avançado")
-
-        layout.addWidget(tabs)
-
-        # Botões
-        buttons_layout = QHBoxLayout()
-        buttons_layout.setSpacing(10)
-
-        # Botão de testar
-        btn_testar = QPushButton("🔍 Testar Conexão")
-        btn_testar.clicked.connect(self.testar_conexao)
-        btn_testar.setStyleSheet("""
-            QPushButton {
-                background-color: #17A2B8;
-                color: white;
-                font-weight: bold;
-                padding: 10px 15px;
-                border: none;
-                border-radius: 5px;
-            }
-            QPushButton:hover {
-                background-color: #138496;
-            }
-        """)
-
-        # Botão de restaurar padrões
-        btn_restaurar = QPushButton("🔄 Restaurar Padrões")
-        btn_restaurar.clicked.connect(self.restaurar_padroes)
-        btn_restaurar.setStyleSheet("""
-            QPushButton {
-                background-color: #6C757D;
-                color: white;
-                font-weight: bold;
-                padding: 10px 15px;
-                border: none;
-                border-radius: 5px;
-            }
-            QPushButton:hover {
-                background-color: #5A6268;
-            }
-        """)
-
-        # Botão cancelar
-        btn_cancelar = QPushButton("❌ Cancelar")
-        btn_cancelar.clicked.connect(self.reject)
-        btn_cancelar.setStyleSheet("""
-            QPushButton {
-                background-color: #DC3545;
-                color: white;
-                font-weight: bold;
-                padding: 10px 15px;
-                border: none;
-                border-radius: 5px;
-            }
-            QPushButton:hover {
-                background-color: #C82333;
-            }
-        """)
-
-        # Botão salvar
-        btn_salvar = QPushButton("💾 Salvar")
-        btn_salvar.clicked.connect(self.accept)
-        btn_salvar.setStyleSheet("""
-            QPushButton {
-                background-color: #25D366;
-                color: white;
-                font-weight: bold;
-                padding: 10px 15px;
-                border: none;
-                border-radius: 5px;
-            }
-            QPushButton:hover {
-                background-color: #20BD5F;
-            }
-        """)
-
-        buttons_layout.addWidget(btn_testar)
-        buttons_layout.addWidget(btn_restaurar)
-        buttons_layout.addStretch()
-        buttons_layout.addWidget(btn_cancelar)
-        buttons_layout.addWidget(btn_salvar)
-
-        layout.addLayout(buttons_layout)
-        self.setLayout(layout)
-
-    def toggle_token_visibility(self):
-        """Alterna visibilidade do token"""
-        if self.token_input.echoMode() == QLineEdit.EchoMode.Password:
-            self.token_input.setEchoMode(QLineEdit.EchoMode.Normal)
-            self.btn_mostrar_token.setText("🙈 Ocultar")
-        else:
-            self.token_input.setEchoMode(QLineEdit.EchoMode.Password)
-            self.btn_mostrar_token.setText("👁️ Mostrar")
-
-    def restaurar_padroes(self):
-        """Restaura configurações padrão"""
-        resposta = QMessageBox.question(
-            self,
-            "Restaurar Padrões",
-            "Tem certeza que deseja restaurar as configurações padrão?",
-            QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No
-        )
-
-        if resposta == QMessageBox.StandardButton.Yes:
-            self.instance_id_input.setText("3B6XIW-ZTS923-GEAY6V")
-            self.token_input.setText("Q8EOH07SJkXhg4iT6Qmhz1BJdLl8nL9WF")
-            self.webhook_id_input.setText("0e6e92fd-c357-44e4-b1e5-067d6ae4cd0d")
-            self.intervalo_input.setCurrentText("3 segundos")
-            self.max_conversas_input.setCurrentText("50")
-
-            QMessageBox.information(self, "Sucesso", "Configurações padrão restauradas!")
-
-    def testar_conexao(self):
-        """Testa a conexão com W-API"""
-        instance_id = self.instance_id_input.text().strip()
-        token = self.token_input.text().strip()
-
-        if not instance_id or not token:
-            QMessageBox.warning(self, "Erro", "Preencha Instance ID e Token!")
-            return
-
-        # Criar barra de progresso
-        progress = QProgressBar()
-        progress.setRange(0, 0)  # Indeterminado
-
-        # Dialog de teste
-        test_dialog = QDialog(self)
-        test_dialog.setWindowTitle("Testando Conexão")
-        test_dialog.setFixedSize(300, 100)
-
-        test_layout = QVBoxLayout()
-        test_layout.addWidget(QLabel("Testando conexão com W-API..."))
-        test_layout.addWidget(progress)
-        test_dialog.setLayout(test_layout)
-
-        test_dialog.show()
-        QApplication.processEvents()
-
-        try:
-            client = WAPIClient(instance_id, token)
-            dados = client.buscar_chats(per_page=1)
-
-            test_dialog.close()
-
-            if dados:
-                QMessageBox.information(
-                    self,
-                    "✅ Sucesso",
-                    f"Conexão estabelecida!\n\nTotal de chats: {dados.get('totalChats', 'N/A')}"
-                )
-            else:
-                QMessageBox.warning(
-                    self,
-                    "⚠️ Aviso",
-                    "Conexão estabelecida, mas nenhum dado retornado.\nVerifique as credenciais."
-                )
-        except Exception as e:
-            test_dialog.close()
-            QMessageBox.critical(
-                self,
-                "❌ Erro",
-                f"Erro na conexão:\n\n{str(e)}"
-            )
-
-    def get_configuracao(self):
-        """Retorna as configurações inseridas"""
-        return {
-            'instance_id': self.instance_id_input.text().strip(),
-            'token': self.token_input.text().strip(),
-            'webhook_id': self.webhook_id_input.text().strip(),
-            'intervalo_webhook': int(self.intervalo_input.currentText().split()[0]),
-            'max_conversas': int(self.max_conversas_input.currentText())
-        }
-
-
-class MainWindow(QMainWindow):
-    """Janela principal da aplicação"""
+class ModernChatInterface(QMainWindow):
+    """Interface principal do chat"""
 
     def __init__(self):
         super().__init__()
-        # Configurações padrão
-        self.configuracao = {
-            'instance_id': '3B6XIW-ZTS923-GEAY6V',
-            'token': 'Q8EOH07SJkXhg4iT6Qmhz1BJdLl8nL9WF',
-            'webhook_id': '0e6e92fd-c357-44e4-b1e5-067d6ae4cd0d',
-            'intervalo_webhook': 3,
-            'max_conversas': 50
-        }
-
-        self.wapi_client = None
-        self.webhook_monitor = None
-
+        self.current_chat_id = None
+        self.chats = {}  # Armazena conversas
+        self.dark_mode = False
+        self.webhook_url = None  # Será detectado automaticamente
+        self.webhook_listener = None
+        self.server_discovery = None
+        self.available_servers = []
         self.setup_ui()
-        self.setup_menu()
-        self.setup_status_bar()
-        self.inicializar_servicos()
+        self.discover_servers()
+        self.apply_theme()
+
+    def discover_servers(self):
+        """Inicia descoberta de servidores"""
+        self.server_discovery = ServerDiscovery()
+        self.server_discovery.server_found.connect(self.on_server_found)
+        self.server_discovery.discovery_status.connect(self.on_discovery_status)
+        self.server_discovery.finished.connect(self.on_discovery_finished)
+        self.server_discovery.start()
+
+    def on_server_found(self, url: str, description: str):
+        """Quando um servidor é encontrado"""
+        self.available_servers.append({"url": url, "description": description})
+        self.statusBar().showMessage(f"🔍 Servidor encontrado: {url}")
+
+        # Conectar automaticamente ao primeiro servidor encontrado
+        if not self.webhook_url:
+            self.connect_to_webhook(url)
+
+    def on_discovery_status(self, status: str):
+        """Atualiza status da descoberta"""
+        self.statusBar().showMessage(status)
+
+    def on_discovery_finished(self):
+        """Quando a descoberta termina"""
+        if not self.webhook_url and self.available_servers:
+            # Se nenhuma conexão foi estabelecida, tentar o primeiro servidor
+            first_server = self.available_servers[0]
+            self.connect_to_webhook(first_server["url"])
+        elif not self.available_servers:
+            self.statusBar().showMessage("❌ Nenhum webhook encontrado. Inicie o servidor webhook primeiro.")
+
+    def connect_to_webhook(self, url: str):
+        """Conecta a um webhook específico"""
+        self.webhook_url = url
+        self.setup_webhook_listener()
+        self.contact_status.setText("Conectando...")
+        self.statusBar().showMessage(f"🔗 Conectando a {url}")
+
+    def setup_webhook_listener(self):
+        """Configura listener do webhook"""
+        if self.webhook_listener:
+            self.webhook_listener.stop()
+            self.webhook_listener.wait()
+
+        if self.webhook_url:
+            self.webhook_listener = WebhookListener(self.webhook_url)
+            self.webhook_listener.message_received.connect(self.on_message_received)
+            self.webhook_listener.status_received.connect(self.on_status_received)
+            self.webhook_listener.connection_status.connect(self.on_connection_status)
+            self.webhook_listener.new_chat_created.connect(self.on_new_chat_created)
+            self.webhook_listener.start()
+
+    def on_new_chat_created(self, chat_id: str, name: str, last_message: str):
+        """Quando um novo chat é criado automaticamente"""
+        self.add_chat_to_list(chat_id, name, last_message, unread_count=1)
+        self.statusBar().showMessage(f"💬 Nova conversa: {name}", 3000)
 
     def setup_ui(self):
-        self.setWindowTitle("WhatsApp Business - Atendimento Comercial")
+        """Configura interface principal"""
+        self.setWindowTitle("Chat Moderno - WhatsApp Integration")
         self.setGeometry(100, 100, 1200, 800)
+        self.setMinimumSize(800, 600)
 
         # Widget central
         central_widget = QWidget()
         self.setCentralWidget(central_widget)
 
         # Layout principal
-        layout = QHBoxLayout()
-        layout.setContentsMargins(0, 0, 0, 0)
-        layout.setSpacing(0)
+        main_layout = QHBoxLayout(central_widget)
+        main_layout.setContentsMargins(0, 0, 0, 0)
+        main_layout.setSpacing(0)
 
-        # Splitter para dividir a tela
+        # Splitter para divisão responsiva
         splitter = QSplitter(Qt.Orientation.Horizontal)
 
-        # Painel esquerdo - Lista de conversas
-        painel_esquerdo = QWidget()
-        painel_esquerdo.setMaximumWidth(400)
-        painel_esquerdo.setMinimumWidth(300)
-        painel_esquerdo.setStyleSheet("background-color: white; border-right: 1px solid #E0E0E0;")
+        # ===== PAINEL ESQUERDO =====
+        left_panel = self.create_left_panel()
+        left_panel.setFixedWidth(350)
 
-        layout_esquerdo = QVBoxLayout()
-        layout_esquerdo.setContentsMargins(0, 0, 0, 0)
-        layout_esquerdo.setSpacing(0)
+        # ===== PAINEL CENTRAL =====
+        right_panel = self.create_right_panel()
 
-        # Header do painel esquerdo
-        header_esquerdo = QFrame()
-        header_esquerdo.setFixedHeight(70)
-        header_esquerdo.setStyleSheet("background-color: #F0F2F5; border-bottom: 1px solid #E0E0E0;")
+        splitter.addWidget(left_panel)
+        splitter.addWidget(right_panel)
+        splitter.setStretchFactor(0, 0)
+        splitter.setStretchFactor(1, 1)
 
-        header_layout = QHBoxLayout()
-        header_layout.setContentsMargins(20, 0, 20, 0)
+        main_layout.addWidget(splitter)
 
-        titulo_app = QLabel("Conversas")
-        titulo_app.setFont(QFont("Segoe UI", 14, QFont.Weight.Bold))
+        # Status bar
+        self.statusBar().showMessage("Iniciando...")
 
-        # Botão de atualizar conversas
-        btn_atualizar = QPushButton("🔄")
-        btn_atualizar.setToolTip("Atualizar conversas")
-        btn_atualizar.clicked.connect(self.atualizar_conversas)
-        btn_atualizar.setStyleSheet("""
-            QPushButton {
-                background-color: #25D366;
-                color: white;
-                border: none;
-                border-radius: 15px;
-                padding: 8px;
-                font-size: 14px;
-            }
-            QPushButton:hover {
-                background-color: #20BD5F;
+        # System tray
+        self.setup_system_tray()
+
+    def create_left_panel(self):
+        """Cria painel esquerdo com lista de conversas"""
+        panel = QFrame()
+        panel.setStyleSheet("""
+            QFrame {
+                background-color: #FAFAFA;
+                border-right: 1px solid #E0E0E0;
             }
         """)
 
-        # Indicador de status do webhook
-        self.status_indicator = QLabel("●")
-        self.status_indicator.setStyleSheet("color: #FF0000; font-size: 20px;")
-        self.status_indicator.setToolTip("Status do Webhook")
+        layout = QVBoxLayout(panel)
+        layout.setContentsMargins(0, 0, 0, 0)
+        layout.setSpacing(0)
 
-        header_layout.addWidget(titulo_app)
+        # ===== CABEÇALHO =====
+        header = QFrame()
+        header.setFixedHeight(60)
+        header.setStyleSheet("""
+            QFrame {
+                background: qlineargradient(x1:0, y1:0, x2:1, y2:0, 
+                    stop:0 #1976D2, stop:1 #42A5F5);
+                border: none;
+            }
+        """)
+
+        header_layout = QHBoxLayout(header)
+        header_layout.setContentsMargins(15, 10, 15, 10)
+
+        # Título
+        title = QLabel("Conversas")
+        title.setFont(QFont("Segoe UI", 14, QFont.Weight.Bold))
+        title.setStyleSheet("color: white;")
+
+        # Botão configurações com menu
+        settings_btn = QPushButton("⚙️")
+        settings_btn.setFixedSize(30, 30)
+        settings_btn.setStyleSheet("""
+            QPushButton {
+                background-color: rgba(255,255,255,0.2);
+                border: none;
+                border-radius: 15px;
+                font-size: 14px;
+            }
+            QPushButton:hover {
+                background-color: rgba(255,255,255,0.3);
+            }
+        """)
+
+        # Menu de configurações
+        settings_menu = QMenu()
+
+        # Ação para mostrar servidores disponíveis
+        servers_action = QAction("🔍 Servidores Disponíveis", self)
+        servers_action.triggered.connect(self.show_servers_dialog)
+        settings_menu.addAction(servers_action)
+
+        # Ação para reconectar
+        reconnect_action = QAction("🔄 Reconectar", self)
+        reconnect_action.triggered.connect(self.reconnect_webhook)
+        settings_menu.addAction(reconnect_action)
+
+        settings_menu.addSeparator()
+
+        # Ação para buscar novos servidores
+        discover_action = QAction("🕵️ Buscar Servidores", self)
+        discover_action.triggered.connect(self.discover_servers)
+        settings_menu.addAction(discover_action)
+
+        # Ação para configurações
+        config_action = QAction("⚙️ Configurações", self)
+        config_action.triggered.connect(self.show_settings)
+        settings_menu.addAction(config_action)
+
+        settings_btn.setMenu(settings_menu)
+        settings_btn.clicked.connect(lambda: settings_btn.showMenu())
+
+        header_layout.addWidget(title)
         header_layout.addStretch()
-        header_layout.addWidget(self.status_indicator)
-        header_layout.addWidget(btn_atualizar)
-        header_esquerdo.setLayout(header_layout)
+        header_layout.addWidget(settings_btn)
 
-        # Lista de conversas
-        self.lista_conversas = ListaConversas()
+        # ===== BUSCA =====
+        search_container = QFrame()
+        search_container.setFixedHeight(50)
+        search_container.setStyleSheet("background-color: white; border: none;")
 
-        layout_esquerdo.addWidget(header_esquerdo)
-        layout_esquerdo.addWidget(self.lista_conversas, 1)
-        painel_esquerdo.setLayout(layout_esquerdo)
+        search_layout = QHBoxLayout(search_container)
+        search_layout.setContentsMargins(15, 10, 15, 10)
 
-        # Painel direito - Área de chat
-        self.area_chat = AreaChat()
+        self.search_input = QLineEdit()
+        self.search_input.setPlaceholderText("🔍 Buscar conversas...")
+        self.search_input.setStyleSheet("""
+            QLineEdit {
+                border: 1px solid #E0E0E0;
+                border-radius: 20px;
+                padding: 8px 15px;
+                font-size: 11px;
+                background-color: #F5F5F5;
+            }
+            QLineEdit:focus {
+                border-color: #1976D2;
+                background-color: white;
+            }
+        """)
+        self.search_input.textChanged.connect(self.filter_chats)
+        search_layout.addWidget(self.search_input)
 
-        splitter.addWidget(painel_esquerdo)
-        splitter.addWidget(self.area_chat)
+        # ===== LISTA DE CONVERSAS =====
+        self.chat_list = QListWidget()
+        self.chat_list.setStyleSheet("""
+            QListWidget {
+                border: none;
+                background-color: white;
+                outline: none;
+            }
+            QListWidget::item {
+                border: none;
+                padding: 0px;
+            }
+            QListWidget::item:selected {
+                background-color: #E3F2FD;
+            }
+        """)
+        self.chat_list.itemClicked.connect(self.on_chat_selected)
 
-        # Definir proporções
-        splitter.setSizes([350, 850])
+        # Adicionar conversas de exemplo
+        self.populate_chat_list()
 
-        layout.addWidget(splitter)
-        central_widget.setLayout(layout)
+        layout.addWidget(header)
+        layout.addWidget(search_container)
+        layout.addWidget(self.chat_list)
 
-        # Conectar sinais
-        self.lista_conversas.conversa_selecionada.connect(self.area_chat.carregar_conversa)
+        return panel
 
-    def setup_menu(self):
-        """Configura a barra de menu"""
-        menubar = self.menuBar()
+    def create_right_panel(self):
+        """Cria painel direito com chat ativo"""
+        panel = QFrame()
+        panel.setStyleSheet("background-color: white;")
 
-        # Menu Arquivo
-        menu_arquivo = menubar.addMenu("Arquivo")
+        layout = QVBoxLayout(panel)
+        layout.setContentsMargins(0, 0, 0, 0)
+        layout.setSpacing(0)
 
-        action_atualizar = QAction("Atualizar Conversas", self)
-        action_atualizar.setShortcut("F5")
-        action_atualizar.triggered.connect(self.atualizar_conversas)
-        menu_arquivo.addAction(action_atualizar)
+        # ===== CABEÇALHO DO CHAT =====
+        self.chat_header = self.create_chat_header()
 
-        menu_arquivo.addSeparator()
+        # ===== ÁREA DE MENSAGENS =====
+        self.messages_area = self.create_messages_area()
 
-        action_sair = QAction("Sair", self)
-        action_sair.setShortcut("Ctrl+Q")
-        action_sair.triggered.connect(self.close)
-        menu_arquivo.addAction(action_sair)
+        # ===== ÁREA DE INPUT =====
+        self.input_area = self.create_input_area()
 
-        # Menu Configurações
-        menu_config = menubar.addMenu("Configurações")
+        layout.addWidget(self.chat_header)
+        layout.addWidget(self.messages_area, 1)
+        layout.addWidget(self.input_area)
 
-        action_configurar = QAction("Configurar APIs", self)
-        action_configurar.triggered.connect(self.abrir_configuracoes)
-        menu_config.addAction(action_configurar)
+        return panel
 
-        action_webhook = QAction("Reiniciar Webhook", self)
-        action_webhook.triggered.connect(self.reiniciar_webhook)
-        menu_config.addAction(action_webhook)
+    def create_chat_header(self):
+        """Cria cabeçalho do chat ativo"""
+        header = QFrame()
+        header.setFixedHeight(70)
+        header.setStyleSheet("""
+            QFrame {
+                background: qlineargradient(x1:0, y1:0, x2:1, y2:0, 
+                    stop:0 #1976D2, stop:1 #42A5F5);
+                border: none;
+            }
+        """)
 
-        menu_config.addSeparator()
+        layout = QHBoxLayout(header)
+        layout.setContentsMargins(20, 10, 20, 10)
+        layout.setSpacing(15)
 
-        action_sobre = QAction("Sobre", self)
-        action_sobre.triggered.connect(self.mostrar_sobre)
-        menu_config.addAction(action_sobre)
+        # Avatar do contato
+        self.contact_avatar = QLabel()
+        self.contact_avatar.setFixedSize(50, 50)
+        self.contact_avatar.setStyleSheet("""
+            QLabel {
+                border-radius: 25px;
+                background-color: rgba(255,255,255,0.2);
+                border: 2px solid rgba(255,255,255,0.3);
+                font-size: 18px;
+                font-weight: bold;
+                color: white;
+            }
+        """)
+        self.contact_avatar.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        self.contact_avatar.setText("💬")
 
-    def setup_status_bar(self):
-        """Configura a barra de status"""
-        self.status_bar = QStatusBar()
-        self.setStatusBar(self.status_bar)
+        # Informações do contato
+        info_layout = QVBoxLayout()
+        info_layout.setSpacing(2)
 
-        # Status da conexão W-API
-        self.status_wapi = QLabel("W-API: Desconectado")
-        self.status_wapi.setStyleSheet("color: #FF0000; font-weight: bold;")
-        self.status_bar.addPermanentWidget(self.status_wapi)
+        self.contact_name = QLabel("Selecione uma conversa")
+        self.contact_name.setFont(QFont("Segoe UI", 12, QFont.Weight.Bold))
+        self.contact_name.setStyleSheet("color: white;")
 
-        # Status do Webhook
-        self.status_webhook = QLabel("Webhook: Desconectado")
-        self.status_webhook.setStyleSheet("color: #FF0000; font-weight: bold;")
-        self.status_bar.addPermanentWidget(self.status_webhook)
+        self.contact_status = QLabel("Online")
+        self.contact_status.setFont(QFont("Segoe UI", 9))
+        self.contact_status.setStyleSheet("color: rgba(255,255,255,0.8);")
 
-        self.status_bar.showMessage("Inicializando...")
+        info_layout.addWidget(self.contact_name)
+        info_layout.addWidget(self.contact_status)
 
-    def inicializar_servicos(self):
-        """Inicializa os serviços W-API e Webhook"""
-        # Inicializar W-API
-        self.wapi_client = WAPIClient(
-            self.configuracao['instance_id'],
-            self.configuracao['token']
+        # Botões de ação
+        actions_layout = QHBoxLayout()
+        actions_layout.setSpacing(10)
+
+        call_btn = QPushButton("📞")
+        video_btn = QPushButton("📹")
+        menu_btn = QPushButton("⋮")
+
+        for btn in [call_btn, video_btn, menu_btn]:
+            btn.setFixedSize(40, 40)
+            btn.setStyleSheet("""
+                QPushButton {
+                    background-color: rgba(255,255,255,0.2);
+                    border: none;
+                    border-radius: 20px;
+                    font-size: 16px;
+                }
+                QPushButton:hover {
+                    background-color: rgba(255,255,255,0.3);
+                }
+            """)
+
+        actions_layout.addWidget(call_btn)
+        actions_layout.addWidget(video_btn)
+        actions_layout.addWidget(menu_btn)
+
+        layout.addWidget(self.contact_avatar)
+        layout.addLayout(info_layout)
+        layout.addStretch()
+        layout.addLayout(actions_layout)
+
+        return header
+
+    def create_messages_area(self):
+        """Cria área de mensagens"""
+        scroll_area = QScrollArea()
+        scroll_area.setWidgetResizable(True)
+        scroll_area.setHorizontalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
+        scroll_area.setVerticalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAsNeeded)
+        scroll_area.setStyleSheet("""
+            QScrollArea {
+                border: none;
+                background-color: #F8F9FA;
+            }
+            QScrollBar:vertical {
+                background-color: #F0F0F0;
+                width: 8px;
+                border-radius: 4px;
+            }
+            QScrollBar::handle:vertical {
+                background-color: #BDBDBD;
+                border-radius: 4px;
+                min-height: 20px;
+            }
+            QScrollBar::handle:vertical:hover {
+                background-color: #9E9E9E;
+            }
+        """)
+
+        # Container das mensagens
+        self.messages_container = QWidget()
+        self.messages_layout = QVBoxLayout(self.messages_container)
+        self.messages_layout.setContentsMargins(20, 20, 20, 20)
+        self.messages_layout.setSpacing(10)
+        self.messages_layout.addStretch()
+
+        scroll_area.setWidget(self.messages_container)
+
+        # Indicador de digitação
+        self.typing_indicator = TypingIndicator()
+        self.typing_indicator.hide()
+
+        return scroll_area
+
+    def create_input_area(self):
+        """Cria área de input de mensagem"""
+        container = QFrame()
+        container.setFixedHeight(80)
+        container.setStyleSheet("""
+            QFrame {
+                background-color: white;
+                border-top: 1px solid #E0E0E0;
+            }
+        """)
+
+        layout = QHBoxLayout(container)
+        layout.setContentsMargins(20, 15, 20, 15)
+        layout.setSpacing(15)
+
+        # Botão anexar
+        attach_btn = QPushButton("📎")
+        attach_btn.setFixedSize(40, 40)
+        attach_btn.setStyleSheet("""
+            QPushButton {
+                background-color: #F5F5F5;
+                border: 1px solid #E0E0E0;
+                border-radius: 20px;
+                font-size: 16px;
+            }
+            QPushButton:hover {
+                background-color: #EEEEEE;
+            }
+        """)
+        attach_btn.clicked.connect(self.attach_file)
+
+        # Input de texto
+        self.message_input = QLineEdit()
+        self.message_input.setPlaceholderText("Digite sua mensagem...")
+        self.message_input.setStyleSheet("""
+            QLineEdit {
+                border: 1px solid #E0E0E0;
+                border-radius: 25px;
+                padding: 12px 20px;
+                font-size: 11px;
+                background-color: #F8F9FA;
+            }
+            QLineEdit:focus {
+                border-color: #1976D2;
+                background-color: white;
+            }
+        """)
+        self.message_input.returnPressed.connect(self.send_message)
+
+        # Botão emoji
+        emoji_btn = QPushButton("😊")
+        emoji_btn.setFixedSize(40, 40)
+        emoji_btn.setStyleSheet("""
+            QPushButton {
+                background-color: #F5F5F5;
+                border: 1px solid #E0E0E0;
+                border-radius: 20px;
+                font-size: 16px;
+            }
+            QPushButton:hover {
+                background-color: #EEEEEE;
+            }
+        """)
+
+        # Botão enviar
+        self.send_btn = QPushButton("✈️")
+        self.send_btn.setFixedSize(45, 45)
+        self.send_btn.setStyleSheet("""
+            QPushButton {
+                background: qlineargradient(x1:0, y1:0, x2:1, y2:1, 
+                    stop:0 #1976D2, stop:1 #42A5F5);
+                border: none;
+                border-radius: 22px;
+                font-size: 16px;
+                color: white;
+            }
+            QPushButton:hover {
+                background: qlineargradient(x1:0, y1:0, x2:1, y2:1, 
+                    stop:0 #1565C0, stop:1 #1976D2);
+            }
+            QPushButton:pressed {
+                background: qlineargradient(x1:0, y1:0, x2:1, y2:1, 
+                    stop:0 #0D47A1, stop:1 #1565C0);
+            }
+        """)
+        self.send_btn.clicked.connect(self.send_message)
+
+        layout.addWidget(attach_btn)
+        layout.addWidget(self.message_input, 1)
+        layout.addWidget(emoji_btn)
+        layout.addWidget(self.send_btn)
+
+        return container
+
+    def setup_webhook_listener(self):
+        """Configura listener do webhook"""
+        self.webhook_listener = WebhookListener(self.webhook_url)
+        self.webhook_listener.message_received.connect(self.on_message_received)
+        self.webhook_listener.status_received.connect(self.on_status_received)
+        self.webhook_listener.connection_status.connect(self.on_connection_status)
+        self.webhook_listener.start()
+
+    def setup_system_tray(self):
+        """Configura system tray"""
+        if QSystemTrayIcon.isSystemTrayAvailable():
+            self.tray_icon = QSystemTrayIcon()
+            self.tray_icon.setIcon(self.style().standardIcon(self.style().StandardPixmap.SP_ComputerIcon))
+
+            tray_menu = QMenu()
+            show_action = QAction("Mostrar", self)
+            show_action.triggered.connect(self.show)
+            quit_action = QAction("Sair", self)
+            quit_action.triggered.connect(self.close)
+
+            tray_menu.addAction(show_action)
+            tray_menu.addSeparator()
+            tray_menu.addAction(quit_action)
+
+            self.tray_icon.setContextMenu(tray_menu)
+            self.tray_icon.show()
+
+    def populate_chat_list(self):
+        """Popula lista de conversas com dados de exemplo (apenas se vazia)"""
+        # Só adicionar exemplos se não houver chats e nenhum webhook conectado
+        if len(self.chats) == 0 and not self.webhook_url:
+            sample_chats = [
+                {
+                    "id": "exemplo_chat_1",
+                    "name": "💬 Chat de Exemplo",
+                    "last_message": "Esta é uma conversa de exemplo. Conecte um webhook para ver conversas reais.",
+                    "timestamp": "Demo",
+                    "unread": 0
+                }
+            ]
+
+            for chat in sample_chats:
+                item = QListWidgetItem()
+                chat_widget = ChatListItem(
+                    chat["id"], chat["name"], chat["last_message"],
+                    chat["timestamp"], chat["unread"]
+                )
+
+                item.setSizeHint(chat_widget.sizeHint())
+                self.chat_list.addItem(item)
+                self.chat_list.setItemWidget(item, chat_widget)
+
+                # Armazenar conversa de exemplo
+                self.chats[chat["id"]] = {
+                    "name": chat["name"],
+                    "messages": [
+                        {
+                            "text": "🎉 Bem-vindo ao Chat Moderno!",
+                            "is_sent": False,
+                            "timestamp": "Demo",
+                            "sender_name": "Sistema",
+                            "message_id": "demo_1"
+                        },
+                        {
+                            "text": "Esta é uma interface moderna para WhatsApp Business API.",
+                            "is_sent": False,
+                            "timestamp": "Demo",
+                            "sender_name": "Sistema",
+                            "message_id": "demo_2"
+                        },
+                        {
+                            "text": "Para começar, execute o webhook:\npython webhook_whatsapp.py",
+                            "is_sent": False,
+                            "timestamp": "Demo",
+                            "sender_name": "Sistema",
+                            "message_id": "demo_3"
+                        },
+                        {
+                            "text": "As conversas reais aparecerão automaticamente aqui! 🚀",
+                            "is_sent": False,
+                            "timestamp": "Demo",
+                            "sender_name": "Sistema",
+                            "message_id": "demo_4"
+                        }
+                    ]
+                }
+
+    def on_chat_selected(self, item):
+        """Quando uma conversa é selecionada"""
+        widget = self.chat_list.itemWidget(item)
+        if widget:
+            self.current_chat_id = widget.chat_id
+            self.contact_name.setText(widget.name)
+            self.contact_avatar.setText(widget.name[:1].upper())
+            self.load_chat_messages()
+
+    def load_chat_messages(self):
+        """Carrega mensagens da conversa atual"""
+        # Limpar mensagens atuais
+        for i in reversed(range(self.messages_layout.count())):
+            child = self.messages_layout.itemAt(i).widget()
+            if child and isinstance(child, MessageBubble):
+                child.setParent(None)
+
+        # Carregar mensagens da conversa
+        if self.current_chat_id in self.chats:
+            for msg in self.chats[self.current_chat_id]["messages"]:
+                self.add_message_bubble(
+                    msg["text"], msg["is_sent"], msg["timestamp"],
+                    msg.get("sender_name", ""), msg.get("message_id", "")
+                )
+
+    def add_message_bubble(self, text: str, is_sent: bool = False,
+                           timestamp: str = "", sender_name: str = "", message_id: str = ""):
+        """Adiciona bolha de mensagem"""
+        if not timestamp:
+            timestamp = datetime.now().strftime("%H:%M")
+
+        bubble = MessageBubble(text, is_sent, timestamp, sender_name, "", message_id)
+
+        # Inserir antes do stretch
+        self.messages_layout.insertWidget(self.messages_layout.count() - 1, bubble)
+
+        # Scroll automático
+        QTimer.singleShot(100, self.scroll_to_bottom)
+
+        # Animação de entrada
+        self.animate_message_entry(bubble)
+
+    def animate_message_entry(self, bubble):
+        """Anima entrada da mensagem"""
+        bubble.setMaximumHeight(0)
+
+        animation = QPropertyAnimation(bubble, b"maximumHeight")
+        animation.setDuration(300)
+        animation.setStartValue(0)
+        animation.setEndValue(bubble.sizeHint().height())
+        animation.setEasingCurve(QEasingCurve.Type.OutCubic)
+        animation.start()
+
+    def scroll_to_bottom(self):
+        """Faz scroll até o final"""
+        scroll_area = self.messages_area
+        scroll_bar = scroll_area.verticalScrollBar()
+        scroll_bar.setValue(scroll_bar.maximum())
+
+    def send_message(self):
+        """Envia mensagem"""
+        text = self.message_input.text().strip()
+        if not text or not self.current_chat_id:
+            return
+
+        # Adicionar à interface
+        self.add_message_bubble(text, is_sent=True)
+
+        # Salvar na conversa
+        if self.current_chat_id in self.chats:
+            self.chats[self.current_chat_id]["messages"].append({
+                "text": text,
+                "is_sent": True,
+                "timestamp": datetime.now().strftime("%H:%M"),
+                "message_id": f"msg_{int(time.time())}"
+            })
+
+        # Limpar input
+        self.message_input.clear()
+
+        # Enviar via webhook (implementar conforme API)
+        self.send_via_webhook(text)
+
+        # Simular resposta automática (remover em produção)
+        QTimer.singleShot(2000, lambda: self.simulate_typing())
+        QTimer.singleShot(4000, lambda: self.simulate_response())
+
+    def send_via_webhook(self, message: str):
+        """Envia mensagem via webhook"""
+        try:
+            payload = {
+                "to": self.current_chat_id,
+                "message": message,
+                "timestamp": datetime.now().isoformat()
+            }
+
+            response = requests.post(
+                f"{self.webhook_url}/send",
+                json=payload,
+                timeout=5
+            )
+
+            if response.status_code == 200:
+                self.statusBar().showMessage("Mensagem enviada", 2000)
+            else:
+                self.statusBar().showMessage("Erro ao enviar mensagem", 3000)
+
+        except Exception as e:
+            self.statusBar().showMessage(f"Erro: {str(e)}", 3000)
+
+    def simulate_typing(self):
+        """Simula indicador de digitação"""
+        self.messages_layout.insertWidget(self.messages_layout.count() - 1, self.typing_indicator)
+        self.typing_indicator.show()
+        self.typing_indicator.start_animation()
+        self.scroll_to_bottom()
+
+    def simulate_response(self):
+        """Simula resposta automática"""
+        self.typing_indicator.stop_animation()
+        self.typing_indicator.hide()
+        self.typing_indicator.setParent(None)
+
+        responses = [
+            "Oi! Como você está?", "Que legal!", "Entendi 👍",
+            "Vou verificar isso", "Obrigado pela mensagem!"
+        ]
+
+        response = responses[int(time.time()) % len(responses)]
+        sender_name = self.chats[self.current_chat_id]["name"] if self.current_chat_id in self.chats else "Contato"
+
+        self.add_message_bubble(response, is_sent=False, sender_name=sender_name)
+
+        # Salvar resposta
+        if self.current_chat_id in self.chats:
+            self.chats[self.current_chat_id]["messages"].append({
+                "text": response,
+                "is_sent": False,
+                "timestamp": datetime.now().strftime("%H:%M"),
+                "sender_name": sender_name,
+                "message_id": f"msg_{int(time.time())}_recv"
+            })
+
+    def on_message_received(self, data: dict):
+        """Processa mensagem recebida do webhook"""
+        try:
+            chat_id = data.get("chat", {}).get("id", "")
+            sender = data.get("sender", {})
+            sender_name = sender.get("pushName", "Contato")
+            sender_id = sender.get("id", "")
+            content = data.get("msgContent", {})
+            message_text = content.get("conversation", "")
+            is_from_me = data.get("fromMe", False)
+
+            if not chat_id:
+                chat_id = sender_id  # Usar ID do remetente como fallback
+
+            if chat_id and message_text:
+                # Verificar se é uma mensagem enviada por mim
+                if is_from_me:
+                    # Ignorar mensagens enviadas por mim (já foram processadas localmente)
+                    return
+
+                # Criar conversa se não existir
+                if chat_id not in self.chats:
+                    print(f"🆕 Criando nova conversa para {sender_name} ({chat_id})")
+                    self.chats[chat_id] = {
+                        "name": sender_name or f"Contato {chat_id[-4:]}",
+                        "messages": []
+                    }
+
+                    # Adicionar à lista de conversas
+                    self.add_chat_to_list(
+                        chat_id,
+                        self.chats[chat_id]["name"],
+                        message_text,
+                        unread_count=1
+                    )
+
+                    # Emitir sinal de novo chat criado
+                    self.webhook_listener.new_chat_created.emit(
+                        chat_id,
+                        self.chats[chat_id]["name"],
+                        message_text
+                    )
+                else:
+                    # Atualizar nome se mudou
+                    if sender_name and sender_name != self.chats[chat_id]["name"]:
+                        self.chats[chat_id]["name"] = sender_name
+                        self.update_chat_in_list(chat_id, sender_name, message_text)
+
+                # Adicionar mensagem se for o chat atual
+                if self.current_chat_id == chat_id:
+                    self.add_message_bubble(
+                        message_text,
+                        is_sent=False,
+                        sender_name=sender_name
+                    )
+
+                    # Reproduzir som de notificação
+                    self.play_notification_sound()
+                else:
+                    # Atualizar contador de mensagens não lidas
+                    self.update_unread_count(chat_id, 1)
+
+                # Salvar mensagem
+                self.chats[chat_id]["messages"].append({
+                    "text": message_text,
+                    "is_sent": False,
+                    "timestamp": datetime.now().strftime("%H:%M"),
+                    "sender_name": sender_name,
+                    "message_id": data.get("messageId", "")
+                })
+
+                # Atualizar status bar
+                self.statusBar().showMessage(f"📨 Nova mensagem de {sender_name}", 3000)
+
+                # Mostrar notificação desktop se não estiver focado
+                if not self.isActiveWindow():
+                    self.show_desktop_notification(
+                        f"Nova mensagem - {sender_name}",
+                        message_text[:50] + "..." if len(message_text) > 50 else message_text
+                    )
+
+        except Exception as e:
+            print(f"Erro ao processar mensagem: {e}")
+            self.statusBar().showMessage(f"❌ Erro ao processar mensagem: {e}", 5000)
+
+    def update_chat_in_list(self, chat_id: str, name: str, last_message: str):
+        """Atualiza chat existente na lista"""
+        for i in range(self.chat_list.count()):
+            item = self.chat_list.item(i)
+            widget = self.chat_list.itemWidget(item)
+            if widget and hasattr(widget, 'chat_id') and widget.chat_id == chat_id:
+                # Atualizar widget existente
+                widget.name = name
+                widget.last_message = last_message
+                widget.timestamp = datetime.now().strftime("%H:%M")
+
+                # Recriar o widget (método simples de atualização)
+                new_widget = ChatListItem(chat_id, name, last_message, widget.timestamp, widget.unread_count)
+                item.setSizeHint(new_widget.sizeHint())
+                self.chat_list.setItemWidget(item, new_widget)
+                break
+
+    def update_unread_count(self, chat_id: str, increment: int = 1):
+        """Atualiza contador de mensagens não lidas"""
+        for i in range(self.chat_list.count()):
+            item = self.chat_list.item(i)
+            widget = self.chat_list.itemWidget(item)
+            if widget and hasattr(widget, 'chat_id') and widget.chat_id == chat_id:
+                widget.unread_count += increment
+
+                # Recriar widget com novo contador
+                new_widget = ChatListItem(
+                    chat_id, widget.name, widget.last_message,
+                    widget.timestamp, widget.unread_count
+                )
+                item.setSizeHint(new_widget.sizeHint())
+                self.chat_list.setItemWidget(item, new_widget)
+                break
+
+    def play_notification_sound(self):
+        """Reproduz som de notificação"""
+        try:
+            # Para Windows
+            import winsound
+            winsound.PlaySound("SystemAsterisk", winsound.SND_ALIAS | winsound.SND_ASYNC)
+        except ImportError:
+            try:
+                # Para Linux/Mac
+                import os
+                os.system("echo -e '\a'")
+            except:
+                pass
+
+    def show_desktop_notification(self, title: str, message: str):
+        """Mostra notificação desktop"""
+        try:
+            if hasattr(self, 'tray_icon') and self.tray_icon:
+                self.tray_icon.showMessage(
+                    title,
+                    message,
+                    QSystemTrayIcon.MessageIcon.Information,
+                    3000  # 3 segundos
+                )
+        except:
+            pass
+
+    def on_status_received(self, data: dict):
+        """Processa status recebido do webhook"""
+        status = data.get("status", "")
+        message_id = data.get("messageId", "")
+
+        if status == "DELIVERY":
+            # Atualizar status de entrega
+            self.update_message_status(message_id, "delivered")
+
+    def on_connection_status(self, connected: bool, message: str):
+        """Atualiza status da conexão"""
+        if connected:
+            self.statusBar().showMessage(f"✅ {message}")
+            self.contact_status.setText("Online")
+        else:
+            self.statusBar().showMessage(f"❌ {message}")
+            self.contact_status.setText("Desconectado")
+
+    def add_chat_to_list(self, chat_id: str, name: str, last_message: str):
+        """Adiciona nova conversa à lista"""
+        item = QListWidgetItem()
+        chat_widget = ChatListItem(
+            chat_id, name, last_message,
+            datetime.now().strftime("%H:%M"), 1
         )
 
-        # Testar conexão W-API
-        self.testar_wapi()
+        item.setSizeHint(chat_widget.sizeHint())
+        self.chat_list.insertItem(0, item)  # Adicionar no topo
+        self.chat_list.setItemWidget(item, chat_widget)
 
-        # Atualizar lista de conversas na interface
-        self.lista_conversas.wapi_client = self.wapi_client
-        self.area_chat.wapi_client = self.wapi_client
+    def update_message_status(self, message_id: str, status: str):
+        """Atualiza status da mensagem"""
+        # Implementar atualização visual do status
+        pass
 
-        # Inicializar Webhook Monitor
-        self.iniciar_webhook()
+    def filter_chats(self, text: str):
+        """Filtra conversas baseado no texto de busca"""
+        text = text.lower().strip()
 
-        # Carregar conversas iniciais
-        self.atualizar_conversas()
+        for i in range(self.chat_list.count()):
+            item = self.chat_list.item(i)
+            widget = self.chat_list.itemWidget(item)
 
-    def testar_wapi(self):
-        """Testa conexão com W-API"""
-        try:
-            dados = self.wapi_client.buscar_chats(per_page=1)
-            if dados:
-                self.status_wapi.setText("W-API: Conectado")
-                self.status_wapi.setStyleSheet("color: #25D366; font-weight: bold;")
-                return True
-            else:
-                self.status_wapi.setText("W-API: Erro")
-                self.status_wapi.setStyleSheet("color: #FF0000; font-weight: bold;")
-                return False
-        except Exception as e:
-            self.status_wapi.setText(f"W-API: Erro - {str(e)[:20]}")
-            self.status_wapi.setStyleSheet("color: #FF0000; font-weight: bold;")
-            return False
+            if widget and hasattr(widget, 'name'):
+                # Verificar se o nome ou última mensagem contém o texto
+                name_match = text in widget.name.lower()
+                message_match = text in widget.last_message.lower()
 
-    def iniciar_webhook(self):
-        """Inicia o monitor de webhook"""
-        if self.webhook_monitor:
-            self.webhook_monitor.stop()
-            self.webhook_monitor.wait()
+                # Mostrar/esconder item baseado na busca
+                if text == "" or name_match or message_match:
+                    item.setHidden(False)
+                else:
+                    item.setHidden(True)
 
-        self.webhook_monitor = WebhookMonitor(self.configuracao['webhook_id'])
-        self.webhook_monitor.nova_mensagem.connect(self.processar_nova_mensagem)
-        self.webhook_monitor.status_changed.connect(self.atualizar_status_webhook)
-        self.webhook_monitor.start()
+    def attach_file(self):
+        """Anexar arquivo"""
+        if not self.current_chat_id:
+            self.statusBar().showMessage("❌ Selecione uma conversa primeiro", 3000)
+            return
 
-    def reiniciar_webhook(self):
-        """Reinicia o monitor de webhook"""
-        self.status_bar.showMessage("Reiniciando webhook...")
-        self.iniciar_webhook()
+        file_path, _ = QFileDialog.getOpenFileName(
+            self, "Selecionar Arquivo",
+            "", "Todos os Arquivos (*)"
+        )
 
-    def processar_nova_mensagem(self, data):
-        """Processa nova mensagem recebida do webhook"""
-        try:
-            # Processar na área de chat se for da conversa atual
-            self.area_chat.processar_mensagem_webhook(data)
+        if file_path:
+            file_name = Path(file_path).name
+            self.add_message_bubble(f"📎 {file_name}", is_sent=True)
+            self.statusBar().showMessage(f"📎 Arquivo anexado: {file_name}", 3000)
 
-            # Atualizar lista de conversas
-            chat = data.get('chat', {})
-            chat_id = chat.get('id', '')
-            if chat_id:
-                self.lista_conversas.atualizar_conversa(chat_id, data)
+    def show_servers_dialog(self):
+        """Mostra diálogo com servidores disponíveis"""
+        if not self.available_servers:
+            QMessageBox.information(
+                self, "Servidores",
+                "❌ Nenhum servidor encontrado.\n\nInicie o webhook primeiro:\npython webhook_whatsapp.py"
+            )
+            return
 
-            # Notificação na status bar
-            sender = data.get('sender', {})
-            sender_name = sender.get('pushName', 'Contato')
-            self.status_bar.showMessage(f"Nova mensagem de {sender_name}", 3000)
+        dialog = QMessageBox()
+        dialog.setWindowTitle("Servidores Webhook Disponíveis")
+        dialog.setIcon(QMessageBox.Icon.Information)
 
-        except Exception as e:
-            print(f"Erro ao processar nova mensagem: {e}")
+        server_info = []
+        for i, server in enumerate(self.available_servers):
+            status = "🟢 CONECTADO" if server["url"] == self.webhook_url else "⚪ Disponível"
+            server_info.append(f"{i + 1}. {server['url']}\n   {server['description']}\n   Status: {status}")
 
-    def atualizar_status_webhook(self, status):
-        """Atualiza o status do webhook na interface"""
-        if "Conectado" in status:
-            self.status_webhook.setText("Webhook: Conectado")
-            self.status_webhook.setStyleSheet("color: #25D366; font-weight: bold;")
-            self.status_indicator.setStyleSheet("color: #25D366; font-size: 20px;")
-            self.status_indicator.setToolTip("Webhook conectado")
+        dialog.setText("🔍 Servidores Encontrados:\n\n" + "\n\n".join(server_info))
+
+        # Botões para conectar
+        if len(self.available_servers) > 1:
+            dialog.setStandardButtons(QMessageBox.StandardButton.Ok)
+            dialog.addButton("🔄 Trocar Servidor", QMessageBox.ButtonRole.ActionRole)
         else:
-            self.status_webhook.setText(f"Webhook: {status}")
-            self.status_webhook.setStyleSheet("color: #FF0000; font-weight: bold;")
-            self.status_indicator.setStyleSheet("color: #FF0000; font-size: 20px;")
-            self.status_indicator.setToolTip(f"Webhook: {status}")
+            dialog.setStandardButtons(QMessageBox.StandardButton.Ok)
 
-    def atualizar_conversas(self):
-        """Atualiza a lista de conversas"""
-        self.status_bar.showMessage("Atualizando conversas...")
-        self.lista_conversas.carregar_chats()
-        self.status_bar.showMessage("Conversas atualizadas", 2000)
+        result = dialog.exec()
 
-    def abrir_configuracoes(self):
-        """Abre o dialog de configurações"""
-        dialog = ConfiguracaoDialog(self)
+        if result == 1:  # Trocar servidor
+            self.choose_server_dialog()
 
-        # Pré-preencher com configurações atuais
-        dialog.instance_id_input.setText(self.configuracao['instance_id'])
-        dialog.token_input.setText(self.configuracao['token'])
-        dialog.webhook_id_input.setText(self.configuracao['webhook_id'])
-        dialog.intervalo_input.setCurrentText(f"{self.configuracao['intervalo_webhook']} segundos")
-        dialog.max_conversas_input.setCurrentText(str(self.configuracao['max_conversas']))
+    def choose_server_dialog(self):
+        """Diálogo para escolher servidor"""
+        from PyQt6.QtWidgets import QInputDialog
 
-        if dialog.exec() == QDialog.DialogCode.Accepted:
-            # Salvar novas configurações
-            self.configuracao = dialog.get_configuracao()
+        server_names = [f"{s['url']} - {s['description']}" for s in self.available_servers]
 
-            # Reinicializar serviços
-            self.status_bar.showMessage("Aplicando configurações...")
-            self.inicializar_servicos()
-            self.status_bar.showMessage("Configurações aplicadas!", 2000)
+        item, ok = QInputDialog.getItem(
+            self, "Escolher Servidor",
+            "🔗 Selecione o servidor webhook:",
+            server_names, 0, False
+        )
 
-    def mostrar_sobre(self):
-        """Mostra informações sobre o aplicativo"""
-        QMessageBox.about(self, "Sobre",
-                          "WhatsApp Business - Atendimento Comercial\n\n"
-                          "Sistema integrado com:\n"
-                          "• W-API para envio e recebimento\n"
-                          "• Webhook para mensagens em tempo real\n"
-                          "• Interface moderna similar ao WhatsApp\n\n"
-                          "Desenvolvido com PyQt6\n"
-                          "Versão 2.0 - Integrado")
+        if ok and item:
+            # Encontrar servidor selecionado
+            for server in self.available_servers:
+                if item.startswith(server['url']):
+                    self.connect_to_webhook(server['url'])
+                    break
+
+    def reconnect_webhook(self):
+        """Reconecta ao webhook atual"""
+        if self.webhook_url:
+            self.statusBar().showMessage("🔄 Reconectando...")
+            self.setup_webhook_listener()
+        else:
+            self.discover_servers()
+
+    def on_connection_status(self, connected: bool, message: str):
+        """Atualiza status da conexão"""
+        if connected:
+            self.statusBar().showMessage(f"✅ {message}")
+            self.contact_status.setText("🟢 Online")
+        else:
+            self.statusBar().showMessage(f"❌ {message}")
+            self.contact_status.setText("🔴 Desconectado")
+
+    def show_settings(self):
+        """Mostra configurações"""
+        dialog = QMessageBox()
+        dialog.setWindowTitle("Configurações do Chat")
+        dialog.setIcon(QMessageBox.Icon.Information)
+
+        settings_text = f"""⚙️ CONFIGURAÇÕES ATUAIS
+
+🔗 Webhook URL: {self.webhook_url or 'Não conectado'}
+📱 Conversas ativas: {len(self.chats)}
+🔍 Servidores encontrados: {len(self.available_servers)}
+
+💡 RECURSOS DISPONÍVEIS:
+• ✅ Detecção automática de servidores
+• ✅ Criação automática de conversas  
+• ✅ Notificações em tempo real
+• ✅ Interface responsiva
+• ✅ Múltiplos formatos de webhook
+
+🚀 COMO USAR:
+1. Execute o webhook: python webhook_whatsapp.py
+2. O chat se conectará automaticamente
+3. Mensagens do WhatsApp aparecerão aqui
+4. Responda normalmente pela interface
+
+🔧 SOLUÇÃO DE PROBLEMAS:
+• Use 'Buscar Servidores' se não conectar
+• Verifique se o webhook está rodando
+• Teste a URL no navegador: {self.webhook_url or 'N/A'}/status
+"""
+
+        dialog.setText(settings_text)
+        dialog.setStandardButtons(QMessageBox.StandardButton.Ok)
+        dialog.exec()
 
     def closeEvent(self, event):
-        """Evento de fechamento da aplicação"""
-        if self.webhook_monitor:
-            self.webhook_monitor.stop()
-            self.webhook_monitor.wait()
-        event.accept()
+        """Evento de fechamento"""
+        if self.webhook_listener:
+            self.webhook_listener.stop()
+            self.webhook_listener.wait()
+
+        if self.server_discovery:
+            self.server_discovery.stop()
+            self.server_discovery.wait()
+
+    def apply_theme(self):
+        """Aplica tema à aplicação"""
+        if self.dark_mode:
+            # Tema escuro (implementar futuramente)
+            pass
+        else:
+            # Tema claro (já implementado)
+            pass
+
+    def on_status_received(self, data: dict):
+        """Processa status recebido do webhook"""
+        status = data.get("status", "")
+        message_id = data.get("messageId", "")
+
+        if status == "DELIVERY":
+            # Atualizar status de entrega
+            self.update_message_status(message_id, "delivered")
+
+    def update_message_status(self, message_id: str, status: str):
+        """Atualiza status da mensagem"""
+        # Implementar atualização visual do status
+        for i in reversed(range(self.messages_layout.count())):
+            widget = self.messages_layout.itemAt(i).widget()
+            if isinstance(widget, MessageBubble) and hasattr(widget, 'message_id'):
+                if widget.message_id == message_id:
+                    widget.mark_as_read()
+                    break
 
 
 def main():
     """Função principal"""
     app = QApplication(sys.argv)
+    app.setApplicationName("Chat Moderno - WhatsApp Integration")
+    app.setApplicationVersion("2.0")
 
-    # Configurar estilo da aplicação
-    app.setStyle('Fusion')
+    # Configurar fonte padrão
+    font = QFont("Segoe UI", 10)
+    app.setFont(font)
 
-    # Paleta de cores
-    palette = QPalette()
-    palette.setColor(QPalette.ColorRole.Window, QColor(240, 242, 245))
-    palette.setColor(QPalette.ColorRole.WindowText, QColor(0, 0, 0))
-    app.setPalette(palette)
+    print("🚀 CHAT MODERNO - WhatsApp Integration v2.0")
+    print("=" * 60)
+    print("✨ Recursos:")
+    print("• 🔍 Detecção automática de servidores webhook")
+    print("• 💬 Criação automática de conversas")
+    print("• 🔔 Notificações em tempo real")
+    print("• 🎨 Interface moderna e responsiva")
+    print("• 🔄 Reconexão automática")
+    print("=" * 60)
 
-    # Criar e mostrar janela principal
-    window = MainWindow()
-    window.show()
-
-    return app.exec()
-
-
-if __name__ == '__main__':
+    # Verificar dependências críticas
     try:
-        sys.exit(main())
-    except KeyboardInterrupt:
-        print("\n👋 Aplicação encerrada!")
-    except Exception as e:
-        print(f"\n❌ Erro: {e}")
+        import requests
+        print("✅ Requests disponível")
+    except ImportError:
+        print("❌ Módulo 'requests' não encontrado!")
+        print("💡 Execute: pip install requests")
+        return 1
 
+    # Criar e mostrar interface
+    try:
+        window = ModernChatInterface()
+        window.show()
+
+        print("🖥️ Interface iniciada com sucesso!")
+        print("🔍 Buscando servidores webhook...")
+        print("💡 Para iniciar o webhook, execute em outro terminal:")
+        print("   python webhook_whatsapp.py")
+        print("=" * 60)
+
+        # Executar aplicação
+        return app.exec()
+
+    except Exception as e:
+        print(f"❌ Erro ao iniciar interface: {e}")
+        import traceback
+        traceback.print_exc()
+        return 1
+
+
+if __name__ == "__main__":
+    sys.exit(main())
