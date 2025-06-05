@@ -1,11 +1,9 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
 """
-Interface WhatsApp com Webhook - Versão Melhorada
+Interface WhatsApp com Webhook - Versão Corrigida
 Aplicação PyQt6 para receber e exibir mensagens via webhook
-- Sem duplicação de contatos
-- Conversas individuais separadas
-- Mensagens organizadas por remetente/destinatário
+Corrigida para funcionar com a nova estrutura de dados
 """
 
 import sys
@@ -34,6 +32,7 @@ class WebhookListener(QThread):
         self.webhook_url = webhook_url
         self.rodando = True
         self.ultimo_total = 0
+        self.mensagens_processadas = set()  # IDs de mensagens já processadas
 
     def run(self):
         """Loop principal de monitoramento"""
@@ -49,58 +48,53 @@ class WebhookListener(QThread):
 
     def _verificar_novas_mensagens(self):
         """Verifica se há novas mensagens no servidor"""
-        response = requests.get(f"{self.webhook_url}/requisicoes", timeout=5)
+        # Corrige o endpoint para /requests conforme sua URL
+        response = requests.get(f"{self.webhook_url}/requests", timeout=5)
 
         if response.status_code == 200:
             data = response.json()
-            total_atual = data.get('total', 0)
 
-            if total_atual > self.ultimo_total:
-                requisicoes = data.get('requisicoes', [])
-                novas = requisicoes[-(total_atual - self.ultimo_total):]
+            # Verifica se a estrutura tem 'requests' como no seu exemplo
+            if 'requests' in data:
+                requisicoes = data['requests']
 
-                for req in novas:
+                # Processa todas as requisições, filtrando as já processadas
+                for req in requisicoes:
                     mensagem = self._processar_requisicao(req)
-                    if mensagem:
+                    if mensagem and mensagem.get('message_id') not in self.mensagens_processadas:
+                        self.mensagens_processadas.add(mensagem.get('message_id'))
                         self.nova_mensagem.emit(mensagem)
-
-                self.ultimo_total = total_atual
 
     def _processar_requisicao(self, requisicao):
         """Processa uma requisição do webhook"""
         try:
             timestamp = requisicao.get('timestamp', datetime.now().isoformat())
-            json_data = requisicao.get('json', {})
-            raw_data = requisicao.get('data', '')
+            method = requisicao.get('method', '')
 
-            # Tenta processar JSON primeiro
+            # Só processa requisições POST que contêm dados do WhatsApp
+            if method != 'POST':
+                return None
+
+            # Tenta pegar os dados JSON
+            json_data = requisicao.get('json', {})
+
+            # Se não tem JSON, tenta o campo 'data'
+            if not json_data:
+                raw_data = requisicao.get('data', '')
+                if raw_data:
+                    try:
+                        json_data = json.loads(raw_data)
+                    except json.JSONDecodeError:
+                        return None
+
             if json_data:
                 return self._extrair_dados_whatsapp(json_data, timestamp)
-
-            # Tenta fazer parse do raw data
-            if raw_data:
-                try:
-                    parsed_data = json.loads(raw_data)
-                    return self._extrair_dados_whatsapp(parsed_data, timestamp)
-                except json.JSONDecodeError:
-                    pass
 
             return None
 
         except Exception as e:
-            return {
-                'chat_id': 'erro',
-                'remetente': 'Erro',
-                'nome_display': 'Erro no processamento',
-                'telefone': '',
-                'conteudo': f"Erro: {str(e)}",
-                'timestamp': datetime.now().isoformat(),
-                'tipo': 'erro',
-                'profile_picture': '',
-                'from_me': False,
-                'is_group': False,
-                'message_id': f"erro_{int(time.time())}"
-            }
+            print(f"Erro ao processar requisição: {e}")
+            return None
 
     def _extrair_dados_whatsapp(self, data, timestamp):
         """Extrai dados específicos do formato WhatsApp"""
@@ -117,6 +111,7 @@ class WebhookListener(QThread):
             from_me = data.get('fromMe', False)
             is_group = data.get('isGroup', False)
             message_id = data.get('messageId', '')
+            connected_phone = data.get('connectedPhone', '')
 
             # Dados do remetente
             sender = data.get('sender', {})
@@ -131,7 +126,30 @@ class WebhookListener(QThread):
 
             # Conteúdo da mensagem
             msg_content = data.get('msgContent', {})
-            conversation = msg_content.get('conversation', 'Mensagem sem conteúdo')
+
+            # Diferentes tipos de conteúdo
+            conversation = ''
+            message_type = 'text'
+
+            if 'conversation' in msg_content:
+                conversation = msg_content['conversation']
+            elif 'stickerMessage' in msg_content:
+                conversation = "🏷️ Sticker"
+                message_type = 'sticker'
+            elif 'imageMessage' in msg_content:
+                conversation = "📷 Imagem"
+                message_type = 'image'
+            elif 'videoMessage' in msg_content:
+                conversation = "🎥 Vídeo"
+                message_type = 'video'
+            elif 'audioMessage' in msg_content:
+                conversation = "🎵 Áudio"
+                message_type = 'audio'
+            elif 'documentMessage' in msg_content:
+                conversation = "📄 Documento"
+                message_type = 'document'
+            else:
+                conversation = "📱 Mensagem multimídia"
 
             # Timestamp
             moment = data.get('moment', 0)
@@ -143,19 +161,19 @@ class WebhookListener(QThread):
 
             # Lógica para determinar dados do contato
             if is_group:
-                # Para grupos, o chat_id é a chave e sender_name é quem enviou
+                # Para grupos
                 contact_key = chat_id
                 contact_name = f"Grupo {self._formatar_telefone(chat_id)}"
                 contact_phone = self._formatar_telefone(chat_id)
                 contact_profile = chat_profile
                 remetente_final = sender_name or "Membro do grupo"
             else:
-                # Para conversas individuais, sempre usa o chat_id como contato
+                # Para conversas individuais
                 contact_key = chat_id
 
                 if from_me:
                     # Mensagem enviada por mim
-                    contact_name = sender_name or self._formatar_telefone(chat_id)
+                    contact_name = self._obter_nome_contato(chat_id, sender_name)
                     contact_phone = self._formatar_telefone(chat_id)
                     contact_profile = chat_profile
                     remetente_final = "Você"
@@ -175,17 +193,28 @@ class WebhookListener(QThread):
                 'conteudo': conversation,
                 'timestamp': timestamp_formatado,
                 'tipo': 'whatsapp',
+                'message_type': message_type,
                 'profile_picture': contact_profile,
                 'from_me': from_me,
                 'is_group': is_group,
                 'message_id': message_id,
                 'sender_id': sender_id,
-                'sender_name': sender_name
+                'sender_name': sender_name,
+                'connected_phone': connected_phone,
+                'event': event
             }
 
         except Exception as e:
             print(f"Erro ao extrair dados WhatsApp: {e}")
             return None
+
+    def _obter_nome_contato(self, chat_id, sender_name):
+        """Obtém nome do contato a partir do chat_id"""
+        if sender_name:
+            return sender_name
+
+        # Se não tem nome, formata o telefone
+        return self._formatar_telefone(chat_id)
 
     def _formatar_telefone(self, telefone):
         """Formata número de telefone brasileiro"""
@@ -194,14 +223,16 @@ class WebhookListener(QThread):
 
         numeros = ''.join(filter(str.isdigit, telefone))
 
-        if len(numeros) == 11:  # Celular
+        if len(numeros) == 11:  # Celular brasileiro
             return f"({numeros[:2]}) {numeros[2:7]}-{numeros[7:]}"
-        elif len(numeros) == 10:  # Fixo
+        elif len(numeros) == 10:  # Fixo brasileiro
             return f"({numeros[:2]}) {numeros[2:6]}-{numeros[6:]}"
         elif len(numeros) >= 12 and numeros.startswith('55'):  # Com código do país
             num_br = numeros[2:]
             if len(num_br) == 11:
                 return f"({num_br[:2]}) {num_br[2:7]}-{num_br[7:]}"
+            elif len(num_br) == 10:
+                return f"({num_br[:2]}) {num_br[2:6]}-{num_br[6:]}"
 
         return telefone
 
@@ -370,7 +401,7 @@ class MessageBubble(QFrame):
     def _setup_ui(self):
         """Configura a interface da mensagem"""
         self.setMaximumWidth(320)
-        self.setStyleSheet("background-color: transparent;")  # Fundo transparente
+        self.setStyleSheet("background-color: transparent;")
 
         # Layout principal da mensagem
         main_layout = QHBoxLayout()
@@ -399,10 +430,16 @@ class MessageBubble(QFrame):
 
         # Ícone baseado no tipo
         icon_text = ""
-        if self.message_type == "webhook":
-            icon_text = "🔗 "
-        elif self.message_type == "erro":
-            icon_text = "⚠️ "
+        if self.message_type == "sticker":
+            icon_text = "🏷️ "
+        elif self.message_type == "image":
+            icon_text = "📷 "
+        elif self.message_type == "video":
+            icon_text = "🎥 "
+        elif self.message_type == "audio":
+            icon_text = "🎵 "
+        elif self.message_type == "document":
+            icon_text = "📄 "
 
         # Texto da mensagem
         message_label = QLabel(icon_text + self.text)
@@ -437,35 +474,20 @@ class MessageBubble(QFrame):
                 }
             """)
             time_label.setAlignment(Qt.AlignmentFlag.AlignRight)
-
-            # Adiciona stretch à esquerda para empurrar para direita
             main_layout.addStretch(1)
             message_container.addWidget(bubble)
             main_layout.addLayout(message_container)
-
         else:
             # Mensagens recebidas - lado esquerdo
-            if self.message_type == "erro":
-                bg_color = "#FFEBEE"
-                border_color = "#FFCDD2"
-            elif self.message_type == "webhook":
-                bg_color = "#E3F2FD"
-                border_color = "#BBDEFB"
-            else:
-                bg_color = "#FFFFFF"
-                border_color = "#E0E0E0"
-
-            bubble.setStyleSheet(f"""
-                QFrame {{
-                    background-color: {bg_color};
+            bubble.setStyleSheet("""
+                QFrame {
+                    background-color: #FFFFFF;
                     border-radius: 12px;
                     border-bottom-left-radius: 4px;
-                    border: 1px solid {border_color};
-                }}
+                    border: 1px solid #E0E0E0;
+                }
             """)
             time_label.setAlignment(Qt.AlignmentFlag.AlignLeft)
-
-            # Adiciona stretch à direita para manter na esquerda
             message_container.addWidget(bubble)
             main_layout.addLayout(message_container)
             main_layout.addStretch(1)
@@ -487,13 +509,13 @@ class MessageBubble(QFrame):
 class ChatInterface(QMainWindow):
     """Interface principal do chat"""
 
-    def __init__(self, webhook_url='http://localhost:5000'):
+    def __init__(self, webhook_url='https://density-survivor-reasonable-twist.trycloudflare.com'):
         super().__init__()
         self.webhook_url = webhook_url
         self.current_contact = None
-        self.contacts = {}  # {chat_id: {dados_do_contato}}
-        self.contact_messages = {}  # {chat_id: [lista_de_mensagens]}
-        self.contact_widgets = {}  # {chat_id: widget_na_lista}
+        self.contacts = {}
+        self.contact_messages = {}
+        self.contact_widgets = {}
         self.webhook_listener = None
 
         self._setup_ui()
@@ -699,10 +721,10 @@ class ChatInterface(QMainWindow):
         reconnect_btn.clicked.connect(self._reconnect_webhook)
         reconnect_btn.setToolTip("Reconectar webhook")
 
-        # Botão limpar
-        clear_btn = QPushButton("🗑️")
-        clear_btn.setFixedSize(36, 36)
-        clear_btn.setStyleSheet("""
+        # Botão teste
+        test_btn = QPushButton("🧪")
+        test_btn.setFixedSize(36, 36)
+        test_btn.setStyleSheet("""
             QPushButton {
                 background-color: #F5F5F7;
                 border-radius: 18px;
@@ -713,11 +735,11 @@ class ChatInterface(QMainWindow):
                 background-color: #E5E5E7;
             }
         """)
-        clear_btn.clicked.connect(self._clear_webhook_messages)
-        clear_btn.setToolTip("Limpar mensagens do webhook")
+        test_btn.clicked.connect(self._test_webhook_connection)
+        test_btn.setToolTip("Testar conexão com webhook")
 
         header_buttons.addWidget(reconnect_btn)
-        header_buttons.addWidget(clear_btn)
+        header_buttons.addWidget(test_btn)
         parent_layout.addLayout(header_buttons)
 
     def _setup_messages_area(self, parent_layout):
@@ -786,7 +808,7 @@ class ChatInterface(QMainWindow):
     def _testar_conexao_inicial(self):
         """Testa a conexão inicial com o webhook"""
         try:
-            response = requests.get(f"{self.webhook_url}/status", timeout=5)
+            response = requests.get(f"{self.webhook_url}/requests", timeout=5)
             if response.status_code == 200:
                 self._set_status_connected()
             else:
@@ -808,6 +830,22 @@ class ChatInterface(QMainWindow):
             }
         """)
 
+    def _test_webhook_connection(self):
+        """Testa conexão manual com o webhook"""
+        try:
+            response = requests.get(f"{self.webhook_url}/requests", timeout=5)
+            if response.status_code == 200:
+                data = response.json()
+                total = len(data.get('requests', []))
+                QMessageBox.information(self, "Conexão OK",
+                                        f"✅ Webhook conectado!\n\n"
+                                        f"Total de requisições: {total}\n"
+                                        f"URL: {self.webhook_url}")
+            else:
+                QMessageBox.warning(self, "Erro", f"HTTP {response.status_code}")
+        except Exception as e:
+            QMessageBox.warning(self, "Erro", f"Erro de conexão:\n{str(e)}")
+
     def _processar_nova_mensagem(self, mensagem_data):
         """Processa nova mensagem recebida"""
         try:
@@ -819,6 +857,7 @@ class ChatInterface(QMainWindow):
             conteudo = mensagem_data.get('conteudo', '')
             timestamp = mensagem_data.get('timestamp', datetime.now().isoformat())
             tipo = mensagem_data.get('tipo', 'whatsapp')
+            message_type = mensagem_data.get('message_type', 'text')
             profile_picture = mensagem_data.get('profile_picture', '')
             from_me = mensagem_data.get('from_me', False)
             is_group = mensagem_data.get('is_group', False)
@@ -838,7 +877,7 @@ class ChatInterface(QMainWindow):
                 'sender': remetente,
                 'timestamp': timestamp,
                 'is_from_me': from_me,
-                'message_type': tipo,
+                'message_type': message_type,
                 'message_id': message_id
             }
 
@@ -857,7 +896,7 @@ class ChatInterface(QMainWindow):
                         sender=remetente,
                         timestamp=timestamp,
                         is_from_me=from_me,
-                        message_type=tipo
+                        message_type=message_type
                     )
                     QTimer.singleShot(100, self._scroll_to_bottom)
 
@@ -1122,19 +1161,6 @@ class ChatInterface(QMainWindow):
         self._setup_webhook_listener()
         self.status_label.setText("🟡 Reconectando...")
 
-    def _clear_webhook_messages(self):
-        """Limpa mensagens do servidor webhook"""
-        try:
-            response = requests.post(f"{self.webhook_url}/limpar", timeout=5)
-            if response.status_code == 200:
-                QMessageBox.information(self, "Sucesso", "Mensagens do webhook foram limpas!")
-                if self.webhook_listener:
-                    self.webhook_listener.ultimo_total = 0
-            else:
-                QMessageBox.warning(self, "Erro", f"Erro ao limpar: {response.status_code}")
-        except Exception as e:
-            QMessageBox.warning(self, "Erro", f"Erro de conexão: {str(e)}")
-
     def _apply_styles(self):
         """Aplica estilos globais"""
         self.setStyleSheet("""
@@ -1231,7 +1257,7 @@ class ConfigWindow(QWidget):
 
         self.url_input = QLineEdit()
         self.url_input.setPlaceholderText("https://seu-webhook.ngrok.io")
-        self.url_input.setText("https://0587-187-36-92-93.ngrok-free.app")
+        self.url_input.setText("https://density-survivor-reasonable-twist.trycloudflare.com")
         self.url_input.setStyleSheet("""
             QLineEdit {
                 padding: 12px;
@@ -1341,7 +1367,7 @@ class ConfigWindow(QWidget):
 
             if response.status_code == 200:
                 data = response.json()
-                total = data.get('total', 0)
+                total = len(data.get('requests', []))
                 self._set_status(f"✅ Conectado! {total} requisições encontradas", "success")
             else:
                 self._set_status(f"❌ Erro HTTP: {response.status_code}", "error")
@@ -1360,11 +1386,11 @@ class ConfigWindow(QWidget):
         if not url.startswith(('http://', 'https://')):
             url = 'https://' + url
 
-        if not url.endswith('/requisicoes'):
+        if not url.endswith('/requests'):
             if url.endswith('/'):
-                url += 'requisicoes'
+                url += 'requests'
             else:
-                url += '/requisicoes'
+                url += '/requests'
 
         return url
 
@@ -1398,10 +1424,10 @@ class ConfigWindow(QWidget):
             self._set_status("❌ Digite uma URL válida", "error")
             return
 
-        # Remove /requisicoes se presente para usar como base
+        # Remove /requests se presente para usar como base
         base_url = url
-        if base_url.endswith('/requisicoes'):
-            base_url = base_url[:-12]
+        if base_url.endswith('/requests'):
+            base_url = base_url[:-9]
         if base_url.endswith('/'):
             base_url = base_url[:-1]
 
@@ -1423,6 +1449,10 @@ def main():
         app.setWindowIcon(QIcon("whatsapp_icon.png"))
     except:
         pass
+
+    # Para testar com URL específica, descomente a linha abaixo:
+    # interface = ChatInterface("https://density-survivor-reasonable-twist.trycloudflare.com")
+    # interface.show()
 
     # Cria e exibe a janela de configuração
     config_window = ConfigWindow()

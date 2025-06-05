@@ -1,286 +1,314 @@
 #!/usr/bin/env python3
 """
-Webhook com Serveo - Túnel SSH Gratuito
-Alternativa ao ngrok que não precisa de autenticação
+Leitor de Requisições WhatsApp - Cloudflare Tunnel
+Busca e processa as mensagens recebidas pelo webhook
 """
 
-from flask import Flask, request, jsonify
-import json
-import subprocess
-import threading
-import time
-from datetime import datetime
 import requests
-import re
+import json
+from datetime import datetime
+import time
 
 
-class WebhookServeo:
-    def __init__(self, porta=5000):
-        self.porta = porta
-        self.app = Flask(__name__)
-        self.requisicoes = []
-        self.serveo_url = None
-        self.processo_serveo = None
-        self.configurar_rotas()
+class WhatsAppRequestsReader:
+    """Leitor profissional das requisições do WhatsApp"""
 
-    def configurar_rotas(self):
-        """Configura rotas do Flask"""
+    def __init__(self, tunnel_url):
+        self.tunnel_url = tunnel_url.rstrip('/')
+        self.requests_endpoint = f"{self.tunnel_url}/requests"
+        self.clear_endpoint = f"{self.tunnel_url}/requests/clear"
 
-        @self.app.route('/webhook', methods=['GET', 'POST', 'PUT', 'DELETE', 'PATCH'])
-        def webhook():
-            dados = {
-                'timestamp': datetime.now().isoformat(),
-                'method': request.method,
-                'ip': request.remote_addr,
-                'user_agent': request.headers.get('User-Agent', ''),
-                'headers': dict(request.headers),
-                'json': request.get_json(silent=True),
-                'data': request.get_data(as_text=True),
-                'args': dict(request.args),
-                'form': dict(request.form)
-            }
-
-            self.requisicoes.append(dados)
-            self.log_requisicao(dados)
-
-            return jsonify({
-                'status': 'success',
-                'message': 'Webhook recebido via Serveo!',
-                'timestamp': dados['timestamp'],
-                'total': len(self.requisicoes)
-            })
-
-        @self.app.route('/status')
-        def status():
-            return jsonify({
-                'status': 'online',
-                'total_requisicoes': len(self.requisicoes),
-                'serveo_url': self.serveo_url,
-                'porta_local': self.porta
-            })
-
-    def log_requisicao(self, dados):
-        """Log da requisição"""
-        print(f"\n🆕 {dados['method']} - {datetime.now().strftime('%H:%M:%S')}")
-        print(f"🌐 IP: {dados['ip']}")
-
-        if dados['json']:
-            print("📦 JSON:")
-            print(json.dumps(dados['json'], indent=2, ensure_ascii=False))
-        elif dados['data']:
-            print(f"📄 Data: {dados['data']}")
-        elif dados['form']:
-            print(f"📝 Form: {dados['form']}")
-
-        print("-" * 40)
-
-    def iniciar_serveo(self):
-        """Inicia túnel Serveo via SSH"""
-        print(f"🚀 Iniciando túnel Serveo...")
-
+    def get_all_requests(self):
+        """Busca todas as requisições capturadas"""
         try:
-            # Comando SSH para criar túnel
-            cmd = [
-                'ssh',
-                '-o', 'StrictHostKeyChecking=no',
-                '-o', 'ServerAliveInterval=60',
-                '-R', f'80:localhost:{self.porta}',
-                'serveo.net'
-            ]
+            response = requests.get(self.requests_endpoint, timeout=10)
 
-            # Iniciar processo em background
-            self.processo_serveo = subprocess.Popen(
-                cmd,
-                stdout=subprocess.PIPE,
-                stderr=subprocess.PIPE,
-                text=True,
-                bufsize=1,
-                universal_newlines=True
-            )
+            if response.status_code == 200:
+                data = response.json()
+                return data.get('requests', [])
+            else:
+                print(f"❌ Erro: {response.status_code}")
+                return []
 
-            # Aguardar e capturar URL
-            timeout = 15
-            start_time = time.time()
-
-            while time.time() - start_time < timeout:
-                if self.processo_serveo.poll() is not None:
-                    # Processo terminou, verificar erro
-                    stderr = self.processo_serveo.stderr.read()
-                    print(f"❌ Serveo falhou: {stderr}")
-                    return False
-
-                # Tentar ler stdout
-                try:
-                    line = self.processo_serveo.stdout.readline()
-                    if line:
-                        print(f"📡 Serveo: {line.strip()}")
-
-                        # Procurar URL na saída
-                        match = re.search(r'https://[a-zA-Z0-9]+\.serveo\.net', line)
-                        if match:
-                            self.serveo_url = match.group(0)
-                            print(f"✅ Túnel Serveo criado!")
-                            print(f"🔗 URL: {self.serveo_url}")
-                            return True
-
-                except:
-                    pass
-
-                time.sleep(0.5)
-
-            print(f"⏰ Timeout ao obter URL do Serveo")
-            return False
-
-        except FileNotFoundError:
-            print(f"❌ SSH não encontrado!")
-            print(f"💡 No Windows: instale Git Bash ou OpenSSH")
-            print(f"💡 No Linux/Mac: sudo apt install openssh-client")
-            return False
         except Exception as e:
-            print(f"❌ Erro ao iniciar Serveo: {e}")
-            return False
+            print(f"❌ Erro ao buscar requisições: {e}")
+            return []
 
-    def parar_serveo(self):
-        """Para o túnel Serveo"""
-        if self.processo_serveo:
-            try:
-                self.processo_serveo.terminate()
-                self.processo_serveo.wait(timeout=5)
-                print(f"🛑 Túnel Serveo fechado")
-            except:
-                self.processo_serveo.kill()
+    def get_whatsapp_messages(self):
+        """Filtra apenas as mensagens do WhatsApp"""
+        requests_data = self.get_all_requests()
 
-    def testar_webhook(self):
-        """Testa o webhook via Serveo"""
-        if not self.serveo_url:
+        whatsapp_messages = []
+
+        for req in requests_data:
+            # Verificar se é uma requisição POST com JSON do WhatsApp
+            if (req.get('method') == 'POST' and
+                    req.get('json') and
+                    'event' in req.get('json', {})):
+                whatsapp_messages.append(req['json'])
+
+        return whatsapp_messages
+
+    def get_received_messages(self):
+        """Filtra apenas mensagens recebidas (não enviadas)"""
+        messages = self.get_whatsapp_messages()
+
+        received = []
+        for msg in messages:
+            if (msg.get('event') == 'webhookReceived' and
+                    not msg.get('fromMe', True)):
+                received.append(msg)
+
+        return received
+
+    def get_sent_messages(self):
+        """Filtra apenas mensagens enviadas"""
+        messages = self.get_whatsapp_messages()
+
+        sent = []
+        for msg in messages:
+            if (msg.get('event') == 'webhookDelivery' and
+                    msg.get('fromMe', False)):
+                sent.append(msg)
+
+        return sent
+
+    def format_message(self, message):
+        """Formata uma mensagem para exibição"""
+        try:
+            # Informações básicas
+            event = message.get('event', '')
+            is_from_me = message.get('fromMe', False)
+            timestamp = datetime.fromtimestamp(message.get('moment', 0))
+
+            # Informações do remetente
+            sender = message.get('sender', {})
+            sender_name = sender.get('pushName', 'Sem nome')
+            sender_id = sender.get('id', '')
+
+            # Conteúdo da mensagem
+            msg_content = message.get('msgContent', {})
+
+            # Texto da conversa
+            text = msg_content.get('conversation', '')
+
+            # Se for sticker
+            if 'stickerMessage' in msg_content:
+                text = '[STICKER]'
+
+            # Direção da mensagem
+            direction = "📤 ENVIADA" if is_from_me else "📥 RECEBIDA"
+
+            formatted = f"""
+{direction} - {timestamp.strftime('%d/%m/%Y %H:%M:%S')}
+👤 De: {sender_name} ({sender_id})
+💬 Mensagem: {text}
+📱 Event: {event}
+"""
+            return formatted
+
+        except Exception as e:
+            return f"❌ Erro ao formatar mensagem: {e}"
+
+    def show_all_messages(self):
+        """Mostra todas as mensagens formatadas"""
+        messages = self.get_whatsapp_messages()
+
+        if not messages:
+            print("📭 Nenhuma mensagem encontrada")
             return
 
-        print(f"\n🧪 TESTANDO WEBHOOK...")
+        print(f"\n📨 TOTAL DE MENSAGENS: {len(messages)}")
+        print("=" * 60)
+
+        for i, msg in enumerate(messages, 1):
+            print(f"\n📌 MENSAGEM {i}:")
+            print(self.format_message(msg))
+
+    def show_received_only(self):
+        """Mostra apenas mensagens recebidas"""
+        received = self.get_received_messages()
+
+        if not received:
+            print("📭 Nenhuma mensagem recebida")
+            return
+
+        print(f"\n📥 MENSAGENS RECEBIDAS: {len(received)}")
+        print("=" * 60)
+
+        for i, msg in enumerate(received, 1):
+            print(f"\n📌 RECEBIDA {i}:")
+            print(self.format_message(msg))
+
+    def show_sent_only(self):
+        """Mostra apenas mensagens enviadas"""
+        sent = self.get_sent_messages()
+
+        if not sent:
+            print("📭 Nenhuma mensagem enviada")
+            return
+
+        print(f"\n📤 MENSAGENS ENVIADAS: {len(sent)}")
+        print("=" * 60)
+
+        for i, msg in enumerate(sent, 1):
+            print(f"\n📌 ENVIADA {i}:")
+            print(self.format_message(msg))
+
+    def get_statistics(self):
+        """Mostra estatísticas das mensagens"""
+        all_messages = self.get_whatsapp_messages()
+        received = self.get_received_messages()
+        sent = self.get_sent_messages()
+
+        print(f"\n📊 ESTATÍSTICAS:")
+        print("=" * 30)
+        print(f"📨 Total de mensagens: {len(all_messages)}")
+        print(f"📥 Mensagens recebidas: {len(received)}")
+        print(f"📤 Mensagens enviadas: {len(sent)}")
+
+        # Análise por contato
+        contacts = {}
+        for msg in all_messages:
+            sender_name = msg.get('sender', {}).get('pushName', 'Desconhecido')
+            contacts[sender_name] = contacts.get(sender_name, 0) + 1
+
+        print(f"\n👥 MENSAGENS POR CONTATO:")
+        for contact, count in contacts.items():
+            print(f"   {contact}: {count} mensagens")
+
+    def save_to_file(self, filename="whatsapp_messages.json"):
+        """Salva todas as mensagens em arquivo JSON"""
+        messages = self.get_whatsapp_messages()
+
 
         try:
-            # Teste GET
-            response = requests.get(f"{self.serveo_url}/webhook", timeout=10)
-            print(f"✅ GET: Status {response.status_code}")
+            with open(filename, 'w', encoding='utf-8') as f:
+                json.dump(messages, f, indent=2, ensure_ascii=False)
 
-            # Teste POST
-            dados_teste = {
-                "tipo": "teste_serveo",
-                "mensagem": "Teste via túnel Serveo",
-                "timestamp": datetime.now().isoformat()
-            }
-
-            response = requests.post(
-                f"{self.serveo_url}/webhook",
-                json=dados_teste,
-                timeout=10
-            )
-            print(f"✅ POST: Status {response.status_code}")
+            print(f"✅ {len(messages)} mensagens salvas em: {filename}")
 
         except Exception as e:
-            print(f"❌ Teste falhou: {e}")
+            print(f"❌ Erro ao salvar arquivo: {e}")
 
-    def executar(self):
-        """Executa webhook com Serveo"""
-        print("🚀 WEBHOOK COM SERVEO")
-        print("=" * 50)
+    def clear_requests(self):
+        """Limpa todas as requisições do webhook"""
+        try:
+            response = requests.post(self.clear_endpoint, timeout=10)
 
-        # Iniciar servidor Flask em thread
-        def iniciar_flask():
-            self.app.run(host='127.0.0.1', port=self.porta, debug=False)
+            if response.status_code == 200:
+                print("✅ Log de requisições limpo com sucesso")
+            else:
+                print(f"❌ Erro ao limpar: {response.status_code}")
 
-        thread_flask = threading.Thread(target=iniciar_flask, daemon=True)
-        thread_flask.start()
+        except Exception as e:
+            print(f"❌ Erro: {e}")
 
-        # Aguardar Flask iniciar
-        time.sleep(2)
-        print(f"✅ Servidor Flask rodando na porta {self.porta}")
+    def monitor_new_messages(self, interval=5):
+        """Monitora novas mensagens em tempo real"""
+        print(f"\n👀 MONITORANDO NOVAS MENSAGENS...")
+        print(f"🔄 Verificando a cada {interval} segundos")
+        print("💡 Pressione Ctrl+C para parar")
+        print("-" * 50)
 
-        # Iniciar túnel Serveo
-        if not self.iniciar_serveo():
-            print(f"❌ Falha ao criar túnel. Usando apenas localhost.")
-            self.serveo_url = None
-
-        # Testar se funcionou
-        if self.serveo_url:
-            self.testar_webhook()
-
-            print(f"\n📋 URLS IMPORTANTES:")
-            print(f"   🔗 Webhook: {self.serveo_url}/webhook")
-            print(f"   📊 Status: {self.serveo_url}/status")
-        else:
-            print(f"\n📋 URL LOCAL:")
-            print(f"   🔗 Webhook: http://localhost:{self.porta}/webhook")
-
-        print(f"\n🔄 MONITORANDO...")
-        print(f"💡 Pressione Ctrl+C para parar")
-        print("=" * 50)
+        last_count = 0
 
         try:
-            contador = 0
             while True:
-                total = len(self.requisicoes)
-                if total > contador:
-                    print(f"📈 Total: {total}")
-                    contador = total
+                messages = self.get_whatsapp_messages()
+                current_count = len(messages)
 
-                print(f"\r🔍 Aguardando... {datetime.now().strftime('%H:%M:%S')}",
-                      end="", flush=True)
-                time.sleep(1)
+                if current_count > last_count:
+                    new_messages = messages[last_count:]
+
+                    for msg in new_messages:
+                        print(f"\n🆕 NOVA MENSAGEM:")
+                        print(self.format_message(msg))
+
+                    last_count = current_count
+
+                time.sleep(interval)
 
         except KeyboardInterrupt:
-            print(f"\n\n👋 Encerrando...")
-            self.parar_serveo()
-            print(f"📊 Total processado: {len(self.requisicoes)}")
+            print(f"\n👋 Monitoramento interrompido")
 
 
 def main():
     """Função principal"""
-    print("🔍 WEBHOOK SERVEO v1.0")
-    print("=" * 40)
-    print("🌐 Túnel SSH gratuito via serveo.net")
-    print("🔓 Sem necessidade de autenticação")
-    print("=" * 40)
+    # URL do seu túnel (substitua pela sua URL atual)
+    tunnel_url = "https://density-survivor-reasonable-twist.trycloudflare.com"
 
-    try:
-        webhook = WebhookServeo(porta=5000)
-        webhook.executar()
+    reader = WhatsAppRequestsReader(tunnel_url)
 
-    except KeyboardInterrupt:
-        print("\n👋 Programa interrompido!")
-    except Exception as e:
-        print(f"\n❌ Erro: {e}")
+    while True:
+        print("\n📱 WHATSAPP REQUESTS READER")
+        print("=" * 40)
+        print("1. 📊 Ver estatísticas")
+        print("2. 📨 Ver todas as mensagens")
+        print("3. 📥 Ver apenas recebidas")
+        print("4. 📤 Ver apenas enviadas")
+        print("5. 💾 Salvar em arquivo JSON")
+        print("6. 👀 Monitorar em tempo real")
+        print("7. 🗑️  Limpar requisições")
+        print("8. ❌ Sair")
+
+        choice = input("\nEscolha uma opção (1-8): ").strip()
+
+        if choice == "1":
+            reader.get_statistics()
+
+        elif choice == "2":
+            reader.show_all_messages()
+
+        elif choice == "3":
+            reader.show_received_only()
+
+        elif choice == "4":
+            reader.show_sent_only()
+
+        elif choice == "5":
+            filename = input("Nome do arquivo (padrão: whatsapp_messages.json): ").strip()
+            if not filename:
+                filename = "whatsapp_messages.json"
+            reader.save_to_file(filename)
+
+        elif choice == "6":
+            reader.monitor_new_messages()
+
+        elif choice == "7":
+            confirm = input("Tem certeza que quer limpar? (s/N): ").lower()
+            if confirm == 's':
+                reader.clear_requests()
+
+        elif choice == "8":
+            print("👋 Saindo...")
+            break
+
+        else:
+            print("❌ Opção inválida!")
 
 
 if __name__ == '__main__':
     main()
 
-# ===============================================
-# 🌐 SERVEO.NET - CARACTERÍSTICAS:
-# ===============================================
+# =============================================================================
+# 🚀 EXEMPLO DE USO RÁPIDO:
+# =============================================================================
 #
-# ✅ Totalmente gratuito
-# ✅ Sem necessidade de cadastro
-# ✅ Usa SSH (disponível na maioria dos sistemas)
-# ✅ URLs públicas https://
-# ✅ Sem limite de tempo
+# from whatsapp_reader import WhatsAppRequestsReader
 #
-# ===============================================
-# 📋 REQUISITOS:
-# ===============================================
+# # Criar leitor
+# reader = WhatsAppRequestsReader("https://sua-url.trycloudflare.com")
 #
-# • SSH client instalado
-# • Windows: Git Bash ou OpenSSH
-# • Linux/Mac: openssh-client
-# • Flask: pip install flask requests
+# # Buscar todas as mensagens
+# messages = reader.get_whatsapp_messages()
+# print(f"Total: {len(messages)} mensagens")
 #
-# ===============================================
-# 💡 COMO FUNCIONA:
-# ===============================================
+# # Buscar apenas recebidas
+# received = reader.get_received_messages()
+# for msg in received:
+#     text = msg.get('msgContent', {}).get('conversation', '')
+#     sender = msg.get('sender', {}).get('pushName', '')
+#     print(f"{sender}: {text}")
 #
-# 1. Cria túnel SSH para serveo.net
-# 2. Serveo.net redireciona tráfego para localhost
-# 3. Você recebe URL pública gratuita
-# 4. Exemplo: https://abc123.serveo.net
-#
-# ===============================================
-# https://dashboard.ngrok.com/get-started/your-authtoken
+# =============================================================================
