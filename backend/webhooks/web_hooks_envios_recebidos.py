@@ -1,391 +1,684 @@
 #!/usr/bin/env python3
 """
-Debug Webhook Melhorado - Tempo Real Funcional
-Corrige problemas de monitoramento e adiciona melhor análise
+Servidor Webhook Melhorado para Interface WhatsApp
+Versão otimizada para funcionar com a interface PyQt6
 """
 
-import requests
+from flask import Flask, request, jsonify, render_template_string
+from flask_cors import CORS
 import json
 import time
+import threading
 from datetime import datetime
-import hashlib
-
-# ✅ WEBHOOK CORRETO
-WEBHOOK_ID = 'da1ffbef-31d9-41be-bd48-b1da5038715a'
+import requests
+import os
 
 
-class WebhookDebugMelhorado:
-    def __init__(self, webhook_id):
-        self.webhook_id = webhook_id
-        self.url_api = f"https://webhook.site/token/{webhook_id}/requests"
-        self.webhook_url = f"https://webhook.site/{webhook_id}"
-        self.requisicoes_processadas = set()
-        self.ultima_verificacao = None
+class WebhookServer:
+    def __init__(self, porta=5000):
+        self.porta = porta
+        self.app = Flask(__name__)
+        CORS(self.app)  # Permite CORS para requisições da interface
+        self.requisicoes = []
+        self.configurar_rotas()
 
-    def testar_conectividade(self):
-        """Testa conectividade com webhook.site"""
-        print("🔌 TESTANDO CONECTIVIDADE")
-        print("=" * 40)
+    def configurar_rotas(self):
+        """Configura as rotas do Flask"""
 
-        try:
-            # Teste 1: URL principal do webhook
-            print(f"🔗 Testando URL principal: {self.webhook_url}")
-            response = requests.get(self.webhook_url, timeout=10)
-            print(f"   Status: {response.status_code}")
-            print(f"   ✅ Webhook acessível!" if response.status_code == 200 else "   ❌ Webhook inacessível")
+        @self.app.route('/webhook', methods=['GET', 'POST', 'PUT', 'DELETE', 'PATCH'])
+        def webhook():
+            """Endpoint principal do webhook"""
+            dados = {
+                'id': len(self.requisicoes) + 1,
+                'timestamp': datetime.now().isoformat(),
+                'method': request.method,
+                'ip': request.remote_addr,
+                'user_agent': request.headers.get('User-Agent', ''),
+                'headers': dict(request.headers),
+                'json': request.get_json(silent=True),
+                'data': request.get_data(as_text=True),
+                'args': dict(request.args),
+                'form': dict(request.form),
+                'content_type': request.content_type,
+                'url': request.url,
+                'endpoint': request.endpoint
+            }
 
-            # Teste 2: API de requisições
-            print(f"\n📡 Testando API: {self.url_api}")
-            response = requests.get(self.url_api, timeout=10)
-            print(f"   Status: {response.status_code}")
+            self.requisicoes.append(dados)
+            self.log_requisicao_detalhada(dados)
 
-            if response.status_code == 200:
-                data = response.json()
-                total_reqs = len(data.get('data', []))
-                print(f"   ✅ API funcionando! Total de requisições: {total_reqs}")
-                return True
-            else:
-                print(f"   ❌ API não responde corretamente")
-                return False
+            return jsonify({
+                'status': 'success',
+                'message': 'Webhook recebido com sucesso!',
+                'timestamp': dados['timestamp'],
+                'total': len(self.requisicoes),
+                'id': dados['id']
+            })
 
-        except Exception as e:
-            print(f"❌ Erro de conectividade: {e}")
-            return False
+        @self.app.route('/status')
+        def status():
+            """Status do servidor"""
+            return jsonify({
+                'status': 'online',
+                'servidor': 'Webhook Server v2.0',
+                'total_requisicoes': len(self.requisicoes),
+                'porta': self.porta,
+                'timestamp': datetime.now().isoformat(),
+                'uptime': time.time() - self.start_time if hasattr(self, 'start_time') else 0
+            })
 
-    def buscar_requisicoes_novas(self):
-        """Busca apenas requisições novas (mais eficiente)"""
-        try:
-            response = requests.get(self.url_api, timeout=5)
+        @self.app.route('/requisicoes')
+        def listar_requisicoes():
+            """Lista todas as requisições"""
+            return jsonify({
+                'total': len(self.requisicoes),
+                'requisicoes': self.requisicoes[-50:],  # Últimas 50
+                'servidor': 'Webhook Server v2.0'
+            })
 
-            if response.status_code != 200:
-                print(f"⚠️ API retornou status {response.status_code}")
-                return []
+        @self.app.route('/requisicoes/<int:req_id>')
+        def obter_requisicao(req_id):
+            """Obtém requisição específica por ID"""
+            req = next((r for r in self.requisicoes if r['id'] == req_id), None)
+            if req:
+                return jsonify(req)
+            return jsonify({'erro': 'Requisição não encontrada'}), 404
 
-            data = response.json()
-            todas_requisicoes = data.get('data', [])
+        @self.app.route('/limpar', methods=['POST'])
+        def limpar():
+            """Limpa todas as requisições"""
+            count = len(self.requisicoes)
+            self.requisicoes.clear()
+            return jsonify({
+                'message': f'{count} requisições removidas',
+                'novo_total': 0,
+                'timestamp': datetime.now().isoformat()
+            })
 
-            # Filtrar apenas requisições novas
-            requisicoes_novas = []
+        @self.app.route('/simular', methods=['POST'])
+        def simular_mensagem():
+            """Simula uma mensagem WhatsApp para teste"""
+            dados_simulacao = {
+                'object': 'whatsapp_business_account',
+                'entry': [{
+                    'id': '123456789',
+                    'changes': [{
+                        'value': {
+                            'messaging_product': 'whatsapp',
+                            'metadata': {
+                                'display_phone_number': '5511999999999',
+                                'phone_number_id': '123456789'
+                            },
+                            'messages': [{
+                                'from': request.json.get('from', '5511987654321'),
+                                'id': f'sim_{int(time.time())}',
+                                'timestamp': str(int(time.time())),
+                                'type': 'text',
+                                'text': {
+                                    'body': request.json.get('message', 'Mensagem de teste do webhook!')
+                                }
+                            }]
+                        },
+                        'field': 'messages'
+                    }]
+                }]
+            }
 
-            for req in todas_requisicoes:
-                # Criar ID único para a requisição
-                req_id = self.criar_id_requisicao(req)
+            # Simula uma requisição POST no webhook
+            with self.app.test_client() as client:
+                response = client.post('/webhook',
+                                       json=dados_simulacao,
+                                       headers={'Content-Type': 'application/json'})
 
-                if req_id not in self.requisicoes_processadas:
-                    self.requisicoes_processadas.add(req_id)
-                    requisicoes_novas.append(req)
+            return jsonify({
+                'message': 'Mensagem simulada enviada!',
+                'dados': dados_simulacao,
+                'response': response.get_json()
+            })
 
-            return requisicoes_novas
+        @self.app.route('/test', methods=['GET', 'POST'])
+        def teste_rapido():
+            """Endpoint para testes rápidos"""
+            if request.method == 'POST':
+                return self.webhook()
 
-        except requests.RequestException as e:
-            print(f"⚠️ Erro de rede: {e}")
-            return []
-        except Exception as e:
-            print(f"⚠️ Erro inesperado: {e}")
-            return []
+            # GET - Página de teste
+            html_teste = """
+            <!DOCTYPE html>
+            <html>
+            <head>
+                <title>Teste do Webhook</title>
+                <style>
+                    body { font-family: Arial, sans-serif; margin: 40px; }
+                    .container { max-width: 600px; }
+                    .form-group { margin: 15px 0; }
+                    input, textarea, button { padding: 10px; margin: 5px 0; width: 100%; }
+                    button { background: #25D366; color: white; border: none; cursor: pointer; }
+                    button:hover { background: #128C7E; }
+                    .response { background: #f5f5f5; padding: 15px; margin: 15px 0; }
+                    .success { color: #25D366; }
+                    .error { color: #d32f2f; }
+                </style>
+            </head>
+            <body>
+                <div class="container">
+                    <h1>🧪 Teste do Webhook</h1>
 
-    def criar_id_requisicao(self, req):
-        """Cria ID único para requisição baseado em múltiplos fatores"""
-        # Usar UUID se disponível
-        if 'uuid' in req and req['uuid']:
-            return req['uuid']
+                    <div class="form-group">
+                        <h3>Simular Mensagem WhatsApp</h3>
+                        <input type="text" id="from" placeholder="Número do remetente (ex: 5511987654321)" value="5511987654321">
+                        <textarea id="message" placeholder="Digite a mensagem de teste" rows="3">Olá! Esta é uma mensagem de teste do webhook.</textarea>
+                        <button onclick="simularWhatsApp()">📱 Enviar Mensagem WhatsApp</button>
+                    </div>
 
-        # Caso contrário, criar hash baseado no conteúdo
-        elementos_id = [
-            str(req.get('created_at', '')),
-            str(req.get('ip', '')),
-            str(req.get('user_agent', '')),
-            str(req.get('content', ''))[:100],  # Primeiros 100 chars
-            str(req.get('method', '')),
-            str(req.get('url', ''))
-        ]
+                    <div class="form-group">
+                        <h3>Teste JSON Personalizado</h3>
+                        <textarea id="json" placeholder="Cole seu JSON aqui" rows="5">{"teste": "mensagem personalizada", "timestamp": "2024-01-01T12:00:00"}</textarea>
+                        <button onclick="enviarJSON()">📨 Enviar JSON</button>
+                    </div>
 
-        texto_id = '|'.join(elementos_id)
-        return hashlib.md5(texto_id.encode()).hexdigest()
+                    <div class="form-group">
+                        <button onclick="verificarStatus()">📊 Verificar Status</button>
+                        <button onclick="limparRequisicoes()">🗑️ Limpar Requisições</button>
+                    </div>
 
-    def analisar_requisicao_completa(self, req, numero):
-        """Análise mais detalhada e organizada"""
-        timestamp = datetime.now().strftime('%H:%M:%S')
-        print(f"\n🆕 NOVA REQUISIÇÃO #{numero} - {timestamp}")
-        print("=" * 50)
+                    <div id="response" class="response" style="display:none;">
+                        <h4>Resposta:</h4>
+                        <pre id="responseText"></pre>
+                    </div>
+                </div>
 
-        # 1. Informações básicas
-        print("📋 INFORMAÇÕES BÁSICAS:")
-        campos_basicos = ['created_at', 'method', 'ip', 'user_agent']
-        for campo in campos_basicos:
-            valor = req.get(campo, 'N/A')
-            print(f"   {campo}: {valor}")
+                <script>
+                    function mostrarResposta(data, sucesso = true) {
+                        const responseDiv = document.getElementById('response');
+                        const responseText = document.getElementById('responseText');
+                        responseText.textContent = JSON.stringify(data, null, 2);
+                        responseDiv.style.display = 'block';
+                        responseDiv.className = sucesso ? 'response success' : 'response error';
+                    }
 
-        # 2. Análise do conteúdo (foco principal)
+                    function simularWhatsApp() {
+                        const from = document.getElementById('from').value;
+                        const message = document.getElementById('message').value;
+
+                        fetch('/simular', {
+                            method: 'POST',
+                            headers: {'Content-Type': 'application/json'},
+                            body: JSON.stringify({from: from, message: message})
+                        })
+                        .then(response => response.json())
+                        .then(data => mostrarResposta(data))
+                        .catch(error => mostrarResposta({erro: error.message}, false));
+                    }
+
+                    function enviarJSON() {
+                        const jsonText = document.getElementById('json').value;
+
+                        try {
+                            const jsonData = JSON.parse(jsonText);
+                            fetch('/webhook', {
+                                method: 'POST',
+                                headers: {'Content-Type': 'application/json'},
+                                body: JSON.stringify(jsonData)
+                            })
+                            .then(response => response.json())
+                            .then(data => mostrarResposta(data))
+                            .catch(error => mostrarResposta({erro: error.message}, false));
+                        } catch (e) {
+                            mostrarResposta({erro: 'JSON inválido: ' + e.message}, false);
+                        }
+                    }
+
+                    function verificarStatus() {
+                        fetch('/status')
+                        .then(response => response.json())
+                        .then(data => mostrarResposta(data))
+                        .catch(error => mostrarResposta({erro: error.message}, false));
+                    }
+
+                    function limparRequisicoes() {
+                        fetch('/limpar', {method: 'POST'})
+                        .then(response => response.json())
+                        .then(data => mostrarResposta(data))
+                        .catch(error => mostrarResposta({erro: error.message}, false));
+                    }
+                </script>
+            </body>
+            </html>
+            """
+            return html_teste
+
+        @self.app.route('/')
+        def home():
+            """Página inicial do webhook"""
+            total = len(self.requisicoes)
+            ultima_requisicao = self.requisicoes[-1] if self.requisicoes else None
+
+            return f"""
+            <!DOCTYPE html>
+            <html>
+            <head>
+                <title>Webhook Server - Interface WhatsApp</title>
+                <meta charset="utf-8">
+                <style>
+                    body {{ 
+                        font-family: 'Segoe UI', Arial, sans-serif; 
+                        margin: 0; 
+                        padding: 20px; 
+                        background: linear-gradient(135deg, #25D366, #128C7E);
+                        min-height: 100vh;
+                    }}
+                    .container {{ 
+                        max-width: 800px; 
+                        margin: 0 auto; 
+                        background: white; 
+                        padding: 30px; 
+                        border-radius: 15px;
+                        box-shadow: 0 10px 30px rgba(0,0,0,0.2);
+                    }}
+                    h1 {{ color: #25D366; text-align: center; }}
+                    .status {{ 
+                        background: #E8F5E8; 
+                        padding: 15px; 
+                        border-radius: 8px; 
+                        margin: 20px 0;
+                        border-left: 4px solid #25D366;
+                    }}
+                    .endpoints {{ 
+                        background: #F5F5F5; 
+                        padding: 20px; 
+                        border-radius: 8px; 
+                        margin: 20px 0;
+                    }}
+                    .endpoint {{ 
+                        background: white; 
+                        padding: 10px; 
+                        margin: 10px 0; 
+                        border-radius: 5px;
+                        border: 1px solid #E0E0E0;
+                    }}
+                    .method {{ 
+                        background: #25D366; 
+                        color: white; 
+                        padding: 3px 8px; 
+                        border-radius: 3px; 
+                        font-size: 12px;
+                        margin-right: 10px;
+                    }}
+                    .url {{ font-family: monospace; color: #333; }}
+                    .ultima {{ 
+                        background: #FFF3E0; 
+                        padding: 15px; 
+                        border-radius: 8px; 
+                        margin: 20px 0;
+                        border-left: 4px solid #FF9800;
+                    }}
+                    .btn {{ 
+                        display: inline-block; 
+                        padding: 10px 20px; 
+                        background: #25D366; 
+                        color: white; 
+                        text-decoration: none; 
+                        border-radius: 5px; 
+                        margin: 5px;
+                    }}
+                    .btn:hover {{ background: #128C7E; }}
+                    pre {{ background: #f5f5f5; padding: 10px; border-radius: 5px; overflow-x: auto; }}
+                </style>
+            </head>
+            <body>
+                <div class="container">
+                    <h1>🚀 Webhook Server - Interface WhatsApp</h1>
+
+                    <div class="status">
+                        <h3>📊 Status do Servidor</h3>
+                        <p><strong>Status:</strong> 🟢 Online</p>
+                        <p><strong>Total de Requisições:</strong> {total}</p>
+                        <p><strong>Porta:</strong> {self.porta}</p>
+                        <p><strong>Timestamp:</strong> {datetime.now().strftime('%d/%m/%Y %H:%M:%S')}</p>
+                    </div>
+
+                    <div class="endpoints">
+                        <h3>📋 Endpoints Disponíveis</h3>
+
+                        <div class="endpoint">
+                            <span class="method">POST</span>
+                            <span class="url">http://localhost:{self.porta}/webhook</span>
+                            <p>Endpoint principal para receber webhooks</p>
+                        </div>
+
+                        <div class="endpoint">
+                            <span class="method">GET</span>
+                            <span class="url">http://localhost:{self.porta}/status</span>
+                            <p>Verificar status do servidor</p>
+                        </div>
+
+                        <div class="endpoint">
+                            <span class="method">GET</span>
+                            <span class="url">http://localhost:{self.porta}/requisicoes</span>
+                            <p>Listar todas as requisições recebidas</p>
+                        </div>
+
+                        <div class="endpoint">
+                            <span class="method">POST</span>
+                            <span class="url">http://localhost:{self.porta}/limpar</span>
+                            <p>Limpar todas as requisições</p>
+                        </div>
+
+                        <div class="endpoint">
+                            <span class="method">POST</span>
+                            <span class="url">http://localhost:{self.porta}/simular</span>
+                            <p>Simular mensagem WhatsApp para teste</p>
+                        </div>
+                    </div>
+
+                    <div>
+                        <h3>🔗 Ações Rápidas</h3>
+                        <a href="/test" class="btn">🧪 Página de Teste</a>
+                        <a href="/status" class="btn">📊 Ver Status JSON</a>
+                        <a href="/requisicoes" class="btn">📋 Ver Requisições</a>
+                    </div>
+
+                    {f'''
+                    <div class="ultima">
+                        <h3>📬 Última Requisição</h3>
+                        <p><strong>Método:</strong> {ultima_requisicao["method"]}</p>
+                        <p><strong>IP:</strong> {ultima_requisicao["ip"]}</p>
+                        <p><strong>Timestamp:</strong> {ultima_requisicao["timestamp"]}</p>
+                        <p><strong>Conteúdo:</strong></p>
+                        <pre>{json.dumps(ultima_requisicao.get("json", ultima_requisicao.get("data", "Nenhum")), indent=2, ensure_ascii=False)[:300]}...</pre>
+                    </div>
+                    ''' if ultima_requisicao else '''
+                    <div class="ultima">
+                        <h3>📬 Nenhuma Requisição Recebida</h3>
+                        <p>O servidor está aguardando requisições...</p>
+                    </div>
+                    '''}
+
+                    <div class="endpoints">
+                        <h3>💡 Como Usar com a Interface WhatsApp</h3>
+                        <ol>
+                            <li>Execute a interface WhatsApp: <code>python main_window.py</code></li>
+                            <li>Na janela de configuração, digite: <code>http://localhost:{self.porta}</code></li>
+                            <li>Clique em "Salvar e Conectar"</li>
+                            <li>Use a <a href="/test">página de teste</a> para simular mensagens</li>
+                            <li>As mensagens aparecerão automaticamente na interface</li>
+                        </ol>
+                    </div>
+                </div>
+            </body>
+            </html>
+            """
+
+    def log_requisicao_detalhada(self, dados):
+        """Log detalhado da requisição"""
+        print(f"\n🆕 NOVA REQUISIÇÃO #{dados['id']} - {datetime.now().strftime('%H:%M:%S')}")
+        print("=" * 60)
+
+        print(f"📋 Método: {dados['method']}")
+        print(f"🌐 IP: {dados['ip']}")
+        print(f"📱 User-Agent: {dados['user_agent'][:50]}...")
+        print(f"📦 Content-Type: {dados['content_type']}")
+
+        # Analisar conteúdo
         print(f"\n💬 ANÁLISE DO CONTEÚDO:")
-        content = req.get('content')
 
-        if content is None:
-            print("   ❌ Conteúdo é NULL")
-            self.buscar_conteudo_alternativo(req)
-        elif content == '':
-            print("   ❌ Conteúdo é string vazia")
-            self.buscar_conteudo_alternativo(req)
+        if dados['json']:
+            print(f"✅ JSON encontrado:")
+            print(json.dumps(dados['json'], indent=2, ensure_ascii=False)[:500])
+
+            # Detectar tipo de mensagem
+            if self.detectar_whatsapp(dados['json']):
+                print(f"🎯 MENSAGEM WHATSAPP DETECTADA!")
+                self.processar_whatsapp_log(dados['json'])
+
+        elif dados['data']:
+            print(f"📄 Raw data encontrado ({len(dados['data'])} chars):")
+            print(f"   Conteúdo: {dados['data'][:200]}...")
+
+            try:
+                json_data = json.loads(dados['data'])
+                print(f"✅ JSON válido no raw data:")
+                if self.detectar_whatsapp(json_data):
+                    print(f"🎯 MENSAGEM WHATSAPP DETECTADA!")
+                    self.processar_whatsapp_log(json_data)
+            except:
+                print(f"📝 Texto simples (não é JSON)")
+
+        elif dados['form']:
+            print(f"📝 Form data encontrado:")
+            for key, value in dados['form'].items():
+                print(f"   {key}: {value}")
+
+        elif dados['args']:
+            print(f"❓ Query parameters:")
+            for key, value in dados['args'].items():
+                print(f"   {key}: {value}")
         else:
-            print(f"   ✅ Conteúdo encontrado!")
-            print(f"   📏 Tamanho: {len(str(content))} caracteres")
-            print(f"   🔍 Tipo: {type(content)}")
+            print(f"❌ Nenhum conteúdo encontrado")
 
-            # Tentar interpretar como JSON
-            self.interpretar_conteudo(content)
-
-        # 3. Headers e outros dados
-        self.analisar_headers_e_extras(req)
-
-        print("=" * 50)
-
-    def buscar_conteudo_alternativo(self, req):
-        """Busca conteúdo em campos alternativos"""
-        print("   🔍 PROCURANDO EM CAMPOS ALTERNATIVOS:")
-
-        campos_alternativos = [
-            'body', 'text', 'payload', 'data', 'message',
-            'json', 'raw', 'form', 'query'
-        ]
-
-        encontrou_algo = False
-
-        for campo in campos_alternativos:
-            if campo in req and req[campo]:
-                print(f"   ✅ {campo}: {req[campo]}")
-                encontrou_algo = True
-                # Tentar interpretar este conteúdo
-                self.interpretar_conteudo(req[campo])
-
-        if not encontrou_algo:
-            print("   ❌ Nenhum conteúdo encontrado em campos alternativos")
-
-        # Mostrar TODOS os campos disponíveis
-        print(f"\n   📋 TODOS OS CAMPOS DISPONÍVEIS:")
-        for key, value in req.items():
-            tamanho = len(str(value)) if value else 0
-            print(f"      {key}: {type(value)} (tamanho: {tamanho})")
-
-    def interpretar_conteudo(self, content):
-        """Interpreta o conteúdo de forma mais robusta"""
-        print(f"   🧪 INTERPRETANDO CONTEÚDO:")
-
-        # Se for string, tentar JSON
-        if isinstance(content, str):
-            if content.strip():
-                try:
-                    json_data = json.loads(content)
-                    print(f"   ✅ JSON válido encontrado!")
-                    print(f"   📋 Estrutura JSON:")
-                    print(json.dumps(json_data, indent=6, ensure_ascii=False))
-
-                    # Verificar se é WhatsApp
-                    if self.detectar_whatsapp(json_data):
-                        print(f"   🎯 MENSAGEM DO WHATSAPP DETECTADA!")
-                        self.processar_mensagem_whatsapp(json_data)
-
-                except json.JSONDecodeError:
-                    print(f"   📝 Texto simples: {content}")
-            else:
-                print(f"   ❌ String vazia após strip()")
-
-        # Se for dict/objeto
-        elif isinstance(content, dict):
-            print(f"   📊 Objeto/Dict encontrado:")
-            print(json.dumps(content, indent=6, ensure_ascii=False))
-
-            if self.detectar_whatsapp(content):
-                print(f"   🎯 MENSAGEM DO WHATSAPP DETECTADA!")
-                self.processar_mensagem_whatsapp(content)
-
-        else:
-            print(f"   🔍 Tipo não reconhecido: {type(content)}")
-            print(f"   📄 Valor: {repr(content)}")
+        print("=" * 60)
 
     def detectar_whatsapp(self, data):
-        """Detecta se é mensagem do WhatsApp"""
+        """Detecta se é mensagem do WhatsApp Business API"""
         if not isinstance(data, dict):
             return False
 
-        # Campos típicos de webhook do WhatsApp/W-API
+        # Campos do WhatsApp Business API
         campos_whatsapp = [
-            'event', 'instanceId', 'connectedPhone', 'sender',
-            'chat', 'msgContent', 'messageId', 'fromMe',
-            'isGroup', 'moment', 'phone', 'message'
+            'object', 'entry', 'messages', 'changes',
+            'sender', 'chat', 'msgContent', 'messageId'
         ]
 
         encontrados = sum(1 for campo in campos_whatsapp if campo in data)
+
+        # WhatsApp Business API oficial
+        if 'object' in data and data.get('object') == 'whatsapp_business_account':
+            return True
+
+        if 'entry' in data and isinstance(data['entry'], list):
+            return True
+
         return encontrados >= 2
 
-    def processar_mensagem_whatsapp(self, data):
-        """Processa mensagem específica do WhatsApp"""
-        print(f"   📱 DETALHES DA MENSAGEM WHATSAPP:")
+    def processar_whatsapp_log(self, data):
+        """Processa e exibe dados específicos do WhatsApp"""
+        print("-" * 30)
 
-        campos_importantes = {
-            'sender': 'Remetente',
-            'chat': 'Chat',
-            'msgContent': 'Conteúdo',
-            'messageId': 'ID da Mensagem',
-            'fromMe': 'De mim',
-            'isGroup': 'É grupo',
-            'moment': 'Momento'
-        }
+        # WhatsApp Business API oficial
+        if 'entry' in data:
+            for entry in data.get('entry', []):
+                if 'changes' in entry:
+                    for change in entry['changes']:
+                        value = change.get('value', {})
+                        if 'messages' in value:
+                            for message in value['messages']:
+                                print(f"   📱 De: {message.get('from', 'N/A')}")
+                                print(f"   📧 ID: {message.get('id', 'N/A')}")
+                                print(f"   📝 Tipo: {message.get('type', 'N/A')}")
 
-        for campo, nome in campos_importantes.items():
-            if campo in data:
-                print(f"      {nome}: {data[campo]}")
+                                if 'text' in message:
+                                    print(f"   💬 Texto: {message['text'].get('body', 'N/A')}")
+                                elif 'image' in message:
+                                    print(f"   📷 Imagem recebida")
+                                elif 'audio' in message:
+                                    print(f"   🎵 Áudio recebido")
 
-    def analisar_headers_e_extras(self, req):
-        """Analisa headers e dados extras"""
-        print(f"\n🔧 DADOS TÉCNICOS:")
+                                if 'timestamp' in message:
+                                    ts = datetime.fromtimestamp(int(message['timestamp']))
+                                    print(f"   ⏰ Timestamp: {ts.strftime('%H:%M:%S')}")
 
-        # Headers se existirem
-        if 'headers' in req:
-            print(f"   📡 Headers:")
-            headers = req['headers']
-            if isinstance(headers, dict):
-                for key, value in headers.items():
-                    print(f"      {key}: {value}")
+        # Outros formatos (W-API, etc.)
+        else:
+            campos = {
+                'sender': 'Remetente',
+                'chat': 'Chat',
+                'msgContent': 'Conteúdo',
+                'messageId': 'ID da Mensagem',
+                'fromMe': 'De mim'
+            }
 
-        # URL e query parameters
-        if 'url' in req:
-            print(f"   🔗 URL: {req['url']}")
+            for campo, nome in campos.items():
+                if campo in data:
+                    valor = data[campo]
+                    if isinstance(valor, dict):
+                        if 'conversation' in valor:
+                            valor = valor['conversation']
+                        elif 'text' in valor:
+                            valor = valor['text']
+                    print(f"   {nome}: {valor}")
 
-        if 'query' in req and req['query']:
-            print(f"   ❓ Query params: {req['query']}")
+    def executar(self):
+        """Executa o servidor webhook"""
+        self.start_time = time.time()
 
-    def monitorar_tempo_real_melhorado(self):
-        """Monitoramento em tempo real mais eficiente"""
-        print(f"\n🔄 MONITORAMENTO EM TEMPO REAL MELHORADO")
-        print("=" * 50)
-        print(f"🔗 Webhook URL: {self.webhook_url}")
-        print(f"📡 API URL: {self.url_api}")
-        print(f"⏱️ Intervalo de verificação: 2 segundos")
-        print(f"💡 Pressione Ctrl+C para parar")
-        print("=" * 50)
-
-        contador_requisicoes = 0
-        ultima_atividade = datetime.now()
-
-        try:
-            while True:
-                print(f"\r🔍 Verificando... ({datetime.now().strftime('%H:%M:%S')})", end="", flush=True)
-
-                requisicoes_novas = self.buscar_requisicoes_novas()
-
-                if requisicoes_novas:
-                    print()  # Nova linha após o status
-                    ultima_atividade = datetime.now()
-
-                    for req in requisicoes_novas:
-                        contador_requisicoes += 1
-                        self.analisar_requisicao_completa(req, contador_requisicoes)
-
-                        # Separador entre requisições
-                        print(f"\n{'=' * 20} FIM DA REQUISIÇÃO #{contador_requisicoes} {'=' * 20}")
-
-                # Mostrar status a cada 30 segundos
-                agora = datetime.now()
-                if (agora - ultima_atividade).seconds > 30:
-                    print(
-                        f"\n⏰ Aguardando há {(agora - ultima_atividade).seconds}s... Total processadas: {contador_requisicoes}")
-                    ultima_atividade = agora
-
-                time.sleep(2)  # Verificar a cada 2 segundos
-
-        except KeyboardInterrupt:
-            print(f"\n\n👋 Monitoramento interrompido!")
-            print(f"📊 Total de requisições processadas: {contador_requisicoes}")
-            print(f"🕐 Sessão durou: {datetime.now().strftime('%H:%M:%S')}")
-
-    def executar_debug_completo(self):
-        """Executa sequência completa de debug"""
-        print("🚀 INICIANDO DEBUG COMPLETO DO WEBHOOK")
+        print("🚀 SERVIDOR WEBHOOK - INTERFACE WHATSAPP")
+        print("=" * 60)
+        print(f"🌐 Servidor rodando em: http://localhost:{self.porta}")
+        print(f"📡 Webhook URL: http://localhost:{self.porta}/webhook")
+        print(f"🧪 Página de teste: http://localhost:{self.porta}/test")
+        print(f"📊 Status: http://localhost:{self.porta}/status")
+        print("=" * 60)
+        print(f"💡 Use esta URL na interface WhatsApp: http://localhost:{self.porta}")
+        print(f"🔄 Aguardando requisições...")
         print("=" * 60)
 
-        # 1. Testar conectividade
-        if not self.testar_conectividade():
-            print("❌ Falha na conectividade. Abortando...")
-            return
+        try:
+            self.app.run(
+                host='0.0.0.0',  # Permite conexões externas
+                port=self.porta,
+                debug=False,
+                use_reloader=False
+            )
+        except KeyboardInterrupt:
+            print(f"\n👋 Servidor encerrado")
+        except Exception as e:
+            print(f"\n❌ Erro no servidor: {e}")
 
-        # 2. Análise inicial das requisições existentes
-        print(f"\n📋 ANÁLISE INICIAL DAS REQUISIÇÕES EXISTENTES")
-        print("=" * 40)
 
-        requisicoes_existentes = self.buscar_requisicoes_novas()
+def testar_servidor():
+    """Testa o servidor fazendo algumas requisições"""
+    import time
+    import requests
 
-        if requisicoes_existentes:
-            print(f"✅ Encontradas {len(requisicoes_existentes)} requisições")
-            for i, req in enumerate(requisicoes_existentes, 1):
-                self.analisar_requisicao_completa(req, i)
-        else:
-            print("ℹ️ Nenhuma requisição encontrada ainda")
+    print("🧪 TESTANDO SERVIDOR...")
+    time.sleep(2)  # Aguarda servidor iniciar
 
-        # 3. Perguntar sobre monitoramento
-        print(f"\n❓ DESEJA INICIAR MONITORAMENTO EM TEMPO REAL?")
-        print("   • Digite 's' para SIM")
-        print("   • Digite 'n' para NÃO")
-        print("   • Qualquer outra tecla para sair")
+    base_url = "http://localhost:5000"
 
-        opcao = input("\nSua escolha: ").lower().strip()
+    testes = [
+        {
+            'nome': 'Status do servidor',
+            'url': f'{base_url}/status',
+            'metodo': 'GET'
+        },
+        {
+            'nome': 'Webhook simples',
+            'url': f'{base_url}/webhook',
+            'metodo': 'POST',
+            'json': {'teste': 'webhook funcionando', 'timestamp': datetime.now().isoformat()}
+        },
+        {
+            'nome': 'Simulação WhatsApp',
+            'url': f'{base_url}/simular',
+            'metodo': 'POST',
+            'json': {'from': '5511987654321', 'message': 'Teste automático do servidor!'}
+        }
+    ]
 
-        if opcao == 's':
-            self.monitorar_tempo_real_melhorado()
-        elif opcao == 'n':
-            print("👍 Ok! Debug concluído.")
-        else:
-            print("👋 Saindo...")
+    for teste in testes:
+        try:
+            print(f"\n📡 Testando: {teste['nome']}")
+
+            if teste['metodo'] == 'GET':
+                response = requests.get(teste['url'], timeout=5)
+            else:
+                response = requests.post(teste['url'], json=teste.get('json'), timeout=5)
+
+            if response.status_code == 200:
+                print(f"   ✅ Sucesso: {response.status_code}")
+                data = response.json()
+                if 'total' in data:
+                    print(f"   📊 Total: {data['total']}")
+            else:
+                print(f"   ❌ Erro: {response.status_code}")
+
+        except Exception as e:
+            print(f"   ❌ Falha: {e}")
+
+    print(f"\n✅ Testes concluídos!")
 
 
 def main():
-    """Função principal melhorada"""
-    print("🔍 WEBHOOK DEBUG MELHORADO v2.0")
-    print("=" * 60)
-    print("🎯 Análise completa e monitoramento em tempo real")
-    print("🚀 Versão otimizada para detectar problemas")
-    print("=" * 60)
+    """Função principal"""
+    import argparse
+
+    parser = argparse.ArgumentParser(description='Servidor Webhook para Interface WhatsApp')
+    parser.add_argument('--porta', '-p', type=int, default=5000,
+                        help='Porta do servidor (padrão: 5000)')
+    parser.add_argument('--teste', '-t', action='store_true',
+                        help='Executar testes automáticos após iniciar')
+
+    args = parser.parse_args()
+
+    # Verifica dependências
+    try:
+        import flask
+        print("✅ Flask disponível")
+    except ImportError:
+        print("❌ Flask não encontrado! Execute: pip install flask flask-cors")
+        return
 
     try:
-        debug = WebhookDebugMelhorado(WEBHOOK_ID)
-        debug.executar_debug_completo()
+        servidor = WebhookServer(porta=args.porta)
+
+        # Se solicitado, executa testes em thread separada
+        if args.teste:
+            thread_teste = threading.Thread(target=testar_servidor, daemon=True)
+            thread_teste.start()
+
+        servidor.executar()
 
     except KeyboardInterrupt:
-        print("\n👋 Programa interrompido pelo usuário!")
+        print("\n👋 Servidor interrompido pelo usuário!")
     except Exception as e:
         print(f"\n❌ Erro inesperado: {e}")
         import traceback
         traceback.print_exc()
-
-        print(f"\n💡 DICAS PARA RESOLVER:")
-        print("   1. Verifique sua conexão com a internet")
-        print("   2. Confirme se o webhook ID está correto")
-        print("   3. Teste o webhook em um navegador")
 
 
 if __name__ == '__main__':
     main()
 
 # ===============================================
-# 🔧 MELHORIAS IMPLEMENTADAS:
+# 🚀 SERVIDOR WEBHOOK - RECURSOS:
 # ===============================================
 #
-# ✅ Monitoramento mais eficiente (apenas requisições novas)
-# ✅ Melhor identificação de requisições únicas
-# ✅ Análise mais detalhada do conteúdo
-# ✅ Busca em campos alternativos quando conteúdo vazio
-# ✅ Detecção melhorada de mensagens WhatsApp
-# ✅ Tratamento de erros mais robusto
-# ✅ Interface mais clara e informativa
-# ✅ Redução do intervalo de verificação (2s)
-# ✅ Status de progresso em tempo real
+# ✅ Interface web completa com testes
+# ✅ Detecção automática de WhatsApp Business API
+# ✅ Simulação de mensagens para teste
+# ✅ Logs detalhados e organizados
+# ✅ CORS habilitado para interface PyQt6
+# ✅ Múltiplos endpoints úteis
+# ✅ Página de teste interativa
+# ✅ Status em tempo real
+# ✅ Compatível com ngrok
+# ✅ Suporte a múltiplos formatos de API
 #
-# 🚀 PRINCIPAIS CORREÇÕES:
+# ===============================================
+# 📱 COMO USAR:
 # ===============================================
 #
-# 🔧 Sistema de IDs únicos mais confiável
-# 🔧 Verificação de conectividade antes de monitorar
-# 🔧 Análise de TODOS os campos da requisição
-# 🔧 Melhor tratamento de timeouts e erros de rede
-# 🔧 Interface mais responsiva
+# 1. Execute o servidor:
+#    python webhook_server.py
+#
+# 2. Execute a interface:
+#    python main_window.py
+#
+# 3. Na configuração, use:
+#    http://localhost:5000
+#
+# 4. Teste na página:
+#    http://localhost:5000/test
 #
 # ===============================================
