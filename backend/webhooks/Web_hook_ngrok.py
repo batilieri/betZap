@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """
 Servidor Webhook Melhorado para Interface WhatsApp
-Versão otimizada para funcionar com a interface PyQt6
+Versão otimizada para funcionar com a ui PyQt6
 """
 
 from flask import Flask, request, jsonify, render_template_string
@@ -18,7 +18,7 @@ class WebhookServer:
     def __init__(self, porta=5000):
         self.porta = porta
         self.app = Flask(__name__)
-        CORS(self.app)  # Permite CORS para requisições da interface
+        CORS(self.app)  # Permite CORS para requisições da ui
         self.requisicoes = []
         self.configurar_rotas()
 
@@ -398,11 +398,11 @@ class WebhookServer:
                     <div class="endpoints">
                         <h3>💡 Como Usar com a Interface WhatsApp</h3>
                         <ol>
-                            <li>Execute a interface WhatsApp: <code>python main_window.py</code></li>
+                            <li>Execute a ui WhatsApp: <code>python main_window.py</code></li>
                             <li>Na janela de configuração, digite: <code>http://localhost:{self.porta}</code></li>
                             <li>Clique em "Salvar e Conectar"</li>
                             <li>Use a <a href="/test">página de teste</a> para simular mensagens</li>
-                            <li>As mensagens aparecerão automaticamente na interface</li>
+                            <li>As mensagens aparecerão automaticamente na ui</li>
                         </ol>
                     </div>
                 </div>
@@ -539,7 +539,7 @@ class WebhookServer:
         print(f"🧪 Página de teste: http://localhost:{self.porta}/test")
         print(f"📊 Status: http://localhost:{self.porta}/status")
         print("=" * 60)
-        print(f"💡 Use esta URL na interface WhatsApp: http://localhost:{self.porta}")
+        print(f"💡 Use esta URL na ui WhatsApp: http://localhost:{self.porta}")
         print(f"🔄 Aguardando requisições...")
         print("=" * 60)
 
@@ -658,7 +658,7 @@ if __name__ == '__main__':
 # ✅ Detecção automática de WhatsApp Business API
 # ✅ Simulação de mensagens para teste
 # ✅ Logs detalhados e organizados
-# ✅ CORS habilitado para interface PyQt6
+# ✅ CORS habilitado para ui PyQt6
 # ✅ Múltiplos endpoints úteis
 # ✅ Página de teste interativa
 # ✅ Status em tempo real
@@ -672,8 +672,8 @@ if __name__ == '__main__':
 # 1. Execute o servidor:
 #    python webhook_server.py
 #
-# 2. Execute a interface:
-#    python main_window.py
+# 2. Execute a ui:
+#    python main_window_ui.py
 #
 # 3. Na configuração, use:
 #    http://localhost:5000

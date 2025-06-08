@@ -79,9 +79,9 @@ class CloudflaredAutoInstaller:
         base_url = "https://github.com/cloudflare/cloudflared/releases/latest/download"
 
         urls = {
-            'windows': {
-                'amd64': f"{base_url}/cloudflared-windows-amd64.exe",
-                '386': f"{base_url}/cloudflared-windows-386.exe"
+            'ui': {
+                'amd64': f"{base_url}/cloudflared-ui-amd64.exe",
+                '386': f"{base_url}/cloudflared-ui-386.exe"
             },
             'linux': {
                 'amd64': f"{base_url}/cloudflared-linux-amd64",
@@ -165,7 +165,7 @@ class CloudflaredAutoInstaller:
         """Instala cloudflared no local apropriado"""
         print(f"\n🔧 Instalando cloudflared...")
 
-        if self.sistema == 'windows':
+        if self.sistema == 'ui':
             return self._instalar_windows(filepath)
         else:
             return self._instalar_unix(filepath)
@@ -174,7 +174,7 @@ class CloudflaredAutoInstaller:
         """Instalação no Windows"""
         # Tentar instalar em ordem de preferência
         destinos = [
-            Path('./cloudflared.exe'),  # Pasta atual
+            Path('../backend/webhooks/cloudflared.exe'),  # Pasta atual
             Path.home() / 'bin' / 'cloudflared.exe',  # Pasta pessoal
         ]
 

@@ -157,7 +157,7 @@ class DatabaseUtils:
 
             with self.db_manager.get_session() as session:
                 # Buscar eventos antigos
-                from models import WebhookEvent
+                from models_updated import WebhookEvent
                 old_events = session.query(WebhookEvent).filter(
                     WebhookEvent.created_at < cutoff_date
                 ).all()

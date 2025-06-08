@@ -48,7 +48,7 @@ class MessageBubble(QFrame):
         self.setup_ui()
 
     def setup_ui(self):
-        """Configura a interface do balão"""
+        """Configura a ui do balão"""
         self.setMaximumWidth(400)
         self.setMinimumHeight(60)
 
@@ -170,7 +170,7 @@ class TypingIndicator(QFrame):
         self.setup_animation()
 
     def setup_ui(self):
-        """Configura interface do indicador"""
+        """Configura ui do indicador"""
         self.setMaximumWidth(200)
         self.setFixedHeight(40)
         self.setStyleSheet("""
@@ -250,7 +250,7 @@ class ChatListItem(QFrame):
         self.setup_ui()
 
     def setup_ui(self):
-        """Configura interface do item"""
+        """Configura ui do item"""
         self.setFixedHeight(70)
         self.setStyleSheet("""
             ChatListItem {
@@ -544,7 +544,7 @@ class ModernChatInterface(QMainWindow):
         self.statusBar().showMessage(f"💬 Nova conversa: {name}", 3000)
 
     def setup_ui(self):
-        """Configura interface principal"""
+        """Configura ui principal"""
         self.setWindowTitle("Chat Moderno - WhatsApp Integration")
         self.setGeometry(100, 100, 1200, 800)
         self.setMinimumSize(800, 600)
@@ -1017,7 +1017,7 @@ class ModernChatInterface(QMainWindow):
                             "message_id": "demo_1"
                         },
                         {
-                            "text": "Esta é uma interface moderna para WhatsApp Business API.",
+                            "text": "Esta é uma ui moderna para WhatsApp Business API.",
                             "is_sent": False,
                             "timestamp": "Demo",
                             "sender_name": "Sistema",
@@ -1105,7 +1105,7 @@ class ModernChatInterface(QMainWindow):
         if not text or not self.current_chat_id:
             return
 
-        # Adicionar à interface
+        # Adicionar à ui
         self.add_message_bubble(text, is_sent=True)
 
         # Salvar na conversa
@@ -1490,7 +1490,7 @@ class ModernChatInterface(QMainWindow):
 1. Execute o webhook: python webhook_whatsapp.py
 2. O chat se conectará automaticamente
 3. Mensagens do WhatsApp aparecerão aqui
-4. Responda normalmente pela interface
+4. Responda normalmente pela ui
 
 🔧 SOLUÇÃO DE PROBLEMAS:
 • Use 'Buscar Servidores' se não conectar
@@ -1570,7 +1570,7 @@ def main():
         print("💡 Execute: pip install requests")
         return 1
 
-    # Criar e mostrar interface
+    # Criar e mostrar ui
     try:
         window = ModernChatInterface()
         window.show()
@@ -1585,7 +1585,7 @@ def main():
         return app.exec()
 
     except Exception as e:
-        print(f"❌ Erro ao iniciar interface: {e}")
+        print(f"❌ Erro ao iniciar ui: {e}")
         import traceback
         traceback.print_exc()
         return 1

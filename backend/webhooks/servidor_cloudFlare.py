@@ -106,7 +106,7 @@ class CloudflareWebhookManager:
         if system == "Windows":
             print("🪟 WINDOWS:")
             print("1. Baixe: https://github.com/cloudflare/cloudflared/releases/latest")
-            print("2. Procure: cloudflared-windows-amd64.exe")
+            print("2. Procure: cloudflared-ui-amd64.exe")
             print("3. Renomeie para: cloudflared.exe")
             print("4. Coloque na pasta do script")
 

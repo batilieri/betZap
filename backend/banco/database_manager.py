@@ -13,7 +13,7 @@ from contextlib import contextmanager
 from sqlalchemy.exc import IntegrityError, SQLAlchemyError
 from sqlalchemy import func, desc, and_, or_
 
-from models import (
+from models_updated import (
     WebhookEvent, Chat, Sender, MessageContent, MessageStats, ContactStats,
     init_database, create_database_engine, create_session_factory
 )
