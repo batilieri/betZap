@@ -1,4 +1,4 @@
-from backend.wapi.WhatsAppApi import WhatsAppAPI
+from backend.wapi.__whatsAppApi import WhatsAppAPI
 
 
 __all__ = [

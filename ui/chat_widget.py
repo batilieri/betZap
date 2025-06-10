@@ -32,7 +32,7 @@ try:
     from WhatsAppApi import WhatsAppAPI
 except ImportError:
     try:
-        from backend.wapi.WhatsAppApi import WhatsAppAPI
+        from backend.wapi.__whatsAppApi import WhatsAppAPI
     except ImportError:
         print("⚠️ WhatsAppAPI não encontrada, algumas funcionalidades estarão indisponíveis")
         # Classe mock será definida pelo usuário ou pelo sistema principal
