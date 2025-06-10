@@ -1,34 +1,85 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
 """
-Widget de mensagens fofas SUAVIZADO - Interface limpa sem popups
-Remoção de tooltips e janelas flutuantes para experiência mais suave
+Widget de mensagens com integração WhatsAppApi para envios
+Suporte a menu de contexto, reações e anexos
 """
 
 from PyQt6.QtWidgets import (
     QWidget, QVBoxLayout, QHBoxLayout, QLabel, QFrame,
     QGraphicsDropShadowEffect, QPushButton, QScrollArea,
-    QSizePolicy, QApplication
+    QSizePolicy, QApplication, QMenu, QFileDialog,
+    QDialog, QLineEdit, QComboBox, QTextEdit, QWidgetAction, QGridLayout
 )
-from PyQt6.QtCore import Qt, QPropertyAnimation, QRect, QEasingCurve, QTimer, pyqtSignal
-from PyQt6.QtGui import QFont, QColor, QPainter, QPainterPath, QPixmap
+from PyQt6.QtCore import Qt, QPropertyAnimation, QRect, QEasingCurve, QTimer, pyqtSignal, QSize, QPoint, QEvent
+from PyQt6.QtGui import QFont, QColor, QPainter, QPainterPath, QPixmap, QIcon, QAction
 from datetime import datetime
-from typing import Dict
+from typing import Dict, Optional, List, Callable
+
+# Caminho para imports do WhatsAppApi
+import sys
+import os
+import time
+import threading
+
+# Adicionar caminhos para imports
+sys.path.append('.')
+sys.path.append('./backend')
+sys.path.append('./backend/wapi')
+
+# Import condicional do WhatsAppApi
+try:
+    from WhatsAppApi import WhatsAppAPI
+except ImportError:
+    try:
+        from backend.wapi.WhatsAppApi import WhatsAppAPI
+    except ImportError:
+        print("⚠️ WhatsAppAPI não encontrada, algumas funcionalidades estarão indisponíveis")
+        # Classe mock será definida pelo usuário ou pelo sistema principal
+
+
+class MessageOptionsButton(QPushButton):
+    """Botão de opções da mensagem (3 pontinhos)"""
+
+    def __init__(self, parent=None):
+        super().__init__(parent)
+        self.setFixedSize(24, 24)
+        self.setText("⋮")
+        self.setStyleSheet("""
+            QPushButton {
+                background-color: transparent;
+                border: none;
+                border-radius: 12px;
+                color: #7f8c8d;
+                font-size: 16px;
+                font-weight: bold;
+            }
+            QPushButton:hover {
+                background-color: rgba(0, 0, 0, 0.1);
+            }
+        """)
+        self.setCursor(Qt.CursorShape.PointingHandCursor)
 
 
 class MessageBubble(QFrame):
-    """Balão de mensagem fofo com design arredondado - VERSÃO SUAVIZADA"""
+    """Balão de mensagem com menu de contexto e opções avançadas"""
 
-    def __init__(self, message_data: Dict, is_from_me: bool = False):
+    # Sinais para ações em mensagens
+    message_deleted = pyqtSignal(str)  # ID da mensagem
+    message_edited = pyqtSignal(str, str)  # ID da mensagem, novo texto
+    message_reaction = pyqtSignal(str, str)  # ID da mensagem, emoji de reação
+
+    def __init__(self, message_data: Dict, is_from_me: bool = False, whatsapp_api=None):
         super().__init__()
         self.message_data = message_data
         self.is_from_me = is_from_me
         self.is_fully_setup = False
+        self.whatsapp_api = whatsapp_api
         self.setup_ui()
         self.setup_animation()
 
     def setup_ui(self):
-        """Configura a interface do balão - SUAVIZADO"""
+        """Configura a interface do balão com botões de opções"""
         # Configurações básicas do widget
         self.setMaximumWidth(500)
         self.setMinimumHeight(50)
@@ -71,7 +122,7 @@ class MessageBubble(QFrame):
         # Configurar o layout principal
         self.setLayout(main_layout)
 
-        # Estilo do container principal - SEM HOVER OU FOCUS
+        # Estilo do container principal
         self.setStyleSheet("""
             MessageBubble { 
                 background-color: transparent; 
@@ -87,16 +138,20 @@ class MessageBubble(QFrame):
         self.is_fully_setup = True
 
     def _create_bubble(self) -> QFrame:
-        """Cria o balão da mensagem - VERSÃO SUAVIZADA"""
+        """Cria o balão da mensagem com botão de opções"""
         bubble = QFrame()
         bubble.setMaximumWidth(400)
         bubble.setMinimumWidth(120)
         bubble.setSizePolicy(QSizePolicy.Policy.Preferred, QSizePolicy.Policy.Fixed)
 
         # Layout do balão
-        bubble_layout = QVBoxLayout(bubble)
+        bubble_layout = QHBoxLayout(bubble)
         bubble_layout.setContentsMargins(15, 12, 15, 12)
         bubble_layout.setSpacing(5)
+
+        # Container para conteúdo principal
+        content_container = QVBoxLayout()
+        content_container.setSpacing(5)
 
         # Ícone baseado no tipo da mensagem
         message_type = self.message_data.get('message_type', 'text')
@@ -105,40 +160,74 @@ class MessageBubble(QFrame):
         # Conteúdo principal
         content_text = f"{type_icon}{self.message_data.get('content', '')}"
 
-        content_label = QLabel(content_text)
-        content_label.setWordWrap(True)
-        content_label.setFont(QFont('Segoe UI', 11))
-        content_label.setTextInteractionFlags(Qt.TextInteractionFlag.TextSelectableByMouse)
-        content_label.setSizePolicy(QSizePolicy.Policy.Preferred, QSizePolicy.Policy.Minimum)
+        self.content_label = QLabel(content_text)
+        self.content_label.setWordWrap(True)
+        self.content_label.setFont(QFont('Segoe UI', 11))
+        self.content_label.setTextInteractionFlags(Qt.TextInteractionFlag.TextSelectableByMouse)
+        self.content_label.setSizePolicy(QSizePolicy.Policy.Preferred, QSizePolicy.Policy.Minimum)
 
         # Cor do texto baseada no tema
         text_color = "#ffffff" if self.is_from_me else "#2c3e50"
-        content_label.setStyleSheet(f"""
+        self.content_label.setStyleSheet(f"""
             color: {text_color}; 
             background: transparent; 
             border: none;
             selection-background-color: rgba(255, 255, 255, 0.3);
         """)
 
-        bubble_layout.addWidget(content_label)
+        content_container.addWidget(self.content_label)
 
         # Adicionar informações extras baseadas no tipo
         if message_type != 'text':
             extra_widget = self._create_media_preview()
             if extra_widget:
-                bubble_layout.addWidget(extra_widget)
+                content_container.addWidget(extra_widget)
 
-        # Horário da mensagem
+        # Mostrar reação atual se existir
+        if 'reaction' in self.message_data and self.message_data['reaction']:
+            reaction_label = QLabel(self.message_data['reaction'])
+            reaction_label.setStyleSheet("""
+                QLabel {
+                    background-color: rgba(255, 255, 255, 0.3);
+                    border-radius: 10px;
+                    padding: 2px 5px;
+                    font-size: 14px;
+                }
+            """)
+            content_container.addWidget(reaction_label)
+
+        # Horário da mensagem e indicador de status
+        status_layout = QHBoxLayout()
         timestamp_str = self.message_data.get('timestamp_str', '')
+
         if timestamp_str:
-            time_label = QLabel(timestamp_str)
-            time_label.setFont(QFont('Segoe UI', 8))
-            time_label.setAlignment(Qt.AlignmentFlag.AlignRight)
+            self.time_label = QLabel(timestamp_str)
+            self.time_label.setFont(QFont('Segoe UI', 8))
+            self.time_label.setAlignment(Qt.AlignmentFlag.AlignRight)
 
             time_color = "rgba(255,255,255,0.8)" if self.is_from_me else "#7f8c8d"
-            time_label.setStyleSheet(f"color: {time_color}; background: transparent; margin-top: 3px;")
+            self.time_label.setStyleSheet(f"color: {time_color}; background: transparent; margin-top: 3px;")
 
-            bubble_layout.addWidget(time_label)
+            status_layout.addWidget(self.time_label, 1)
+
+            # Adicionar ícone de status para mensagens enviadas
+            if self.is_from_me:
+                status_icon = QLabel("✓")  # Checkmark for delivered
+                status_icon.setFont(QFont('Segoe UI', 8))
+                status_icon.setStyleSheet(f"color: {time_color}; background: transparent;")
+                status_layout.addWidget(status_icon)
+
+        content_container.addLayout(status_layout)
+
+        # Adicionar conteúdo principal
+        bubble_layout.addLayout(content_container, 1)
+
+        # Botão de opções (3 pontinhos)
+        self.options_button = MessageOptionsButton()
+        self.options_button.clicked.connect(self.show_options_menu)
+        self.options_button.setVisible(False)  # Inicialmente oculto
+
+        bubble_layout.addWidget(self.options_button, 0, Qt.AlignmentFlag.AlignRight | Qt.AlignmentFlag.AlignTop)
 
         # Aplicar estilo visual ao balão
         self._apply_bubble_style(bubble)
@@ -146,10 +235,14 @@ class MessageBubble(QFrame):
         # Adicionar sombra suave
         self._add_shadow(bubble)
 
+        # Mostrar botão de opções ao passar o mouse
+        bubble.enterEvent = lambda e: self.options_button.setVisible(True)
+        bubble.leaveEvent = lambda e: self.options_button.setVisible(False)
+
         return bubble
 
     def _apply_bubble_style(self, bubble: QFrame):
-        """Aplica estilo visual ao balão - SEM EFEITOS DE HOVER"""
+        """Aplica estilo visual ao balão"""
         if self.is_from_me:
             # Mensagens enviadas - gradiente azul/roxo
             bubble.setStyleSheet("""
@@ -172,11 +265,11 @@ class MessageBubble(QFrame):
             """)
 
     def _add_shadow(self, bubble: QFrame):
-        """Adiciona sombra mais suave ao balão"""
+        """Adiciona sombra ao balão"""
         shadow = QGraphicsDropShadowEffect()
-        shadow.setBlurRadius(8)  # Reduzido para ser mais sutil
-        shadow.setColor(QColor(0, 0, 0, 20))  # Mais transparente
-        shadow.setOffset(0, 2)  # Menos offset
+        shadow.setBlurRadius(8)
+        shadow.setColor(QColor(0, 0, 0, 20))
+        shadow.setOffset(0, 2)
         bubble.setGraphicsEffect(shadow)
 
     def _get_type_icon(self, message_type: str) -> str:
@@ -194,8 +287,8 @@ class MessageBubble(QFrame):
         }
         return icons.get(message_type, '📱 ')
 
-    def _create_media_preview(self) -> QWidget:
-        """Cria preview para mensagens de mídia - SUAVIZADO"""
+    def _create_media_preview(self) -> Optional[QWidget]:
+        """Cria preview para mensagens de mídia"""
         message_type = self.message_data.get('message_type', 'text')
         media_data = self.message_data.get('media_data', {})
 
@@ -280,13 +373,13 @@ class MessageBubble(QFrame):
         return preview_widget
 
     def setup_animation(self):
-        """Configura animação de entrada mais suave"""
+        """Configura animação de entrada"""
         self.animation = QPropertyAnimation(self, b"geometry")
-        self.animation.setDuration(150)  # Mais rápida
-        self.animation.setEasingCurve(QEasingCurve.Type.OutQuart)  # Mais suave
+        self.animation.setDuration(150)
+        self.animation.setEasingCurve(QEasingCurve.Type.OutQuart)
 
     def animate_in(self):
-        """Anima a entrada do balão suavemente"""
+        """Anima a entrada do balão"""
         if not self.is_fully_setup:
             return
 
@@ -301,6 +394,209 @@ class MessageBubble(QFrame):
         self.animation.setEndValue(end_rect)
         self.animation.start()
 
+    def show_options_menu(self):
+        """Mostra menu de contexto com opções para a mensagem"""
+        if not self.message_data.get('message_id'):
+            return
+
+        menu = QMenu(self)
+        menu.setStyleSheet("""
+            QMenu {
+                background-color: white;
+                border: 1px solid #e0e0e0;
+                border-radius: 8px;
+                padding: 5px;
+            }
+            QMenu::item {
+                padding: 5px 15px;
+                border-radius: 4px;
+            }
+            QMenu::item:selected {
+                background-color: #f0f0f0;
+            }
+        """)
+
+        # Opções do menu
+        if self.is_from_me:
+            edit_action = QAction("✏️ Editar", self)
+            edit_action.triggered.connect(self.edit_message)
+            menu.addAction(edit_action)
+
+            delete_action = QAction("🗑️ Apagar", self)
+            delete_action.triggered.connect(self.delete_message)
+            menu.addAction(delete_action)
+
+            menu.addSeparator()
+
+        # Submenu de reações
+        reactions_menu = QMenu("😀 Reações", menu)
+        reactions_menu.setStyleSheet(menu.styleSheet())
+
+        reactions = ["👍", "❤️", "😂", "😮", "😢", "🙏"]
+        for reaction in reactions:
+            action = QAction(reaction, self)
+            action.triggered.connect(lambda checked, r=reaction: self.add_reaction(r))
+            reactions_menu.addAction(action)
+
+        # Opção para remover reação
+        remove_reaction = QAction("❌ Remover reação", self)
+        remove_reaction.triggered.connect(lambda: self.add_reaction(None))
+        reactions_menu.addAction(remove_reaction)
+
+        menu.addMenu(reactions_menu)
+
+        # Mostrar menu
+        pos = self.options_button.mapToGlobal(QPoint(0, self.options_button.height()))
+        menu.exec(pos)
+
+    def edit_message(self):
+        """Edita o conteúdo da mensagem"""
+        message_id = self.message_data.get('message_id')
+
+        if not message_id or not self.whatsapp_api:
+            return
+
+        # Dialog para editar mensagem
+        dialog = QDialog(self)
+        dialog.setWindowTitle("✏️ Editar Mensagem")
+        dialog.setFixedWidth(400)
+
+        layout = QVBoxLayout(dialog)
+
+        # Campo de edição
+        current_text = self.message_data.get('content', '')
+        if current_text.startswith(('🏷️', '📷', '🎥', '🎵', '📄', '📍', '📊', '📱')):
+            # Remover ícone do início
+            current_text = current_text[2:].strip()
+
+        edit_field = QTextEdit()
+        edit_field.setText(current_text)
+        edit_field.setMinimumHeight(100)
+
+        # Botões
+        button_layout = QHBoxLayout()
+
+        cancel_btn = QPushButton("Cancelar")
+        cancel_btn.clicked.connect(dialog.reject)
+
+        save_btn = QPushButton("Salvar")
+        save_btn.clicked.connect(dialog.accept)
+        save_btn.setStyleSheet("background-color: #27ae60; color: white;")
+
+        button_layout.addWidget(cancel_btn)
+        button_layout.addWidget(save_btn)
+
+        layout.addWidget(QLabel("Editar mensagem:"))
+        layout.addWidget(edit_field)
+        layout.addLayout(button_layout)
+
+        # Executar dialog
+        if dialog.exec() == QDialog.DialogCode.Accepted:
+            new_text = edit_field.toPlainText()
+
+            if new_text != current_text and self.whatsapp_api:
+                # Tentar editar via API
+                try:
+                    # Obter número do destinatário
+                    recipient = self.message_data.get('sender_id', '')
+
+                    result = self.whatsapp_api.editar_mensagem(
+                        recipient, message_id, new_text
+                    )
+
+                    if result:
+                        # Atualizar localmente
+                        self.message_data['content'] = new_text
+                        message_type = self.message_data.get('message_type', 'text')
+                        type_icon = self._get_type_icon(message_type)
+                        self.content_label.setText(f"{type_icon}{new_text}")
+
+                        # Emitir sinal para notificar a edição
+                        self.message_edited.emit(message_id, new_text)
+                    else:
+                        # Mostrar erro
+                        from PyQt6.QtWidgets import QMessageBox
+                        QMessageBox.warning(self, "Erro", "Não foi possível editar a mensagem.")
+
+                except Exception as e:
+                    from PyQt6.QtWidgets import QMessageBox
+                    QMessageBox.critical(self, "Erro", f"Erro ao editar mensagem: {str(e)}")
+
+    def delete_message(self):
+        """Apaga a mensagem"""
+        message_id = self.message_data.get('message_id')
+
+        if not message_id or not self.whatsapp_api:
+            return
+
+        from PyQt6.QtWidgets import QMessageBox
+        reply = QMessageBox.question(
+            self,
+            "Confirmação",
+            "Tem certeza que deseja apagar esta mensagem?",
+            QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No
+        )
+
+        if reply == QMessageBox.StandardButton.Yes:
+            try:
+                # Obter número do destinatário
+                recipient = self.message_data.get('sender_id', '')
+
+                result = self.whatsapp_api.deleta_mensagem(
+                    recipient, [message_id]
+                )
+
+                if result:
+                    # Emitir sinal para notificar a exclusão
+                    self.message_deleted.emit(message_id)
+
+                    # Esconder a mensagem
+                    self.setVisible(False)
+                else:
+                    QMessageBox.warning(self, "Erro", "Não foi possível apagar a mensagem.")
+
+            except Exception as e:
+                QMessageBox.critical(self, "Erro", f"Erro ao apagar mensagem: {str(e)}")
+
+    def add_reaction(self, reaction: Optional[str]):
+        """Adiciona ou remove reação da mensagem"""
+        message_id = self.message_data.get('message_id')
+
+        if not message_id or not self.whatsapp_api:
+            return
+
+        try:
+            # Obter número do destinatário
+            recipient = self.message_data.get('sender_id', '')
+
+            if reaction:
+                # Adicionar reação
+                result = self.whatsapp_api.enviar_reacao(
+                    recipient, message_id, reaction, 1
+                )
+            else:
+                # Remover reação
+                result = self.whatsapp_api.removerReacao(
+                    recipient, message_id, 1
+                )
+
+            if result:
+                # Atualizar estado local
+                self.message_data['reaction'] = reaction
+
+                # Emitir sinal
+                self.message_reaction.emit(message_id, reaction or '')
+
+                # Recarregar mensagem para mostrar reação
+                # Isso será tratado pelo chat principal via sinal
+            else:
+                from PyQt6.QtWidgets import QMessageBox
+                QMessageBox.warning(self, "Erro", "Não foi possível aplicar a reação.")
+
+        except Exception as e:
+            from PyQt6.QtWidgets import QMessageBox
+            QMessageBox.critical(self, "Erro", f"Erro ao reagir à mensagem: {str(e)}")
+
     def sizeHint(self):
         """Retorna tamanho sugerido do widget"""
         if hasattr(self, 'bubble_frame') and self.bubble_frame:
@@ -310,7 +606,7 @@ class MessageBubble(QFrame):
 
 
 class DateSeparator(QWidget):
-    """Separador de data suave entre mensagens"""
+    """Separador de data entre mensagens"""
 
     def __init__(self, date_str: str):
         super().__init__()
@@ -318,8 +614,8 @@ class DateSeparator(QWidget):
         self.setup_ui()
 
     def setup_ui(self):
-        """Configura o separador de data - VERSÃO SUAVIZADA"""
-        self.setFixedHeight(45)  # Ligeiramente menor
+        """Configura o separador de data"""
+        self.setFixedHeight(45)
         self.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Fixed)
 
         layout = QHBoxLayout(self)
@@ -328,7 +624,7 @@ class DateSeparator(QWidget):
         # Linha esquerda
         left_line = QFrame()
         left_line.setFrameStyle(QFrame.Shape.HLine)
-        left_line.setStyleSheet("border: 1px solid #e3e6ea;")  # Cor mais suave
+        left_line.setStyleSheet("border: 1px solid #e3e6ea;")
 
         # Label da data
         date_label = QLabel(self.date_str)
@@ -354,258 +650,187 @@ class DateSeparator(QWidget):
         layout.addWidget(right_line, 1)
 
 
-class ChatHeader(QWidget):
-    """Cabeçalho do chat com informações do contato/grupo - SUAVIZADO"""
+class AttachmentButton(QPushButton):
+    """Botão para anexar arquivos"""
 
-    info_clicked = pyqtSignal()
+    def __init__(self, parent=None):
+        super().__init__(parent)
+        self.setFixedSize(40, 40)
+        self.setText("📎")
+        self.setToolTip("Anexar arquivo")
+        self.setStyleSheet("""
+            QPushButton {
+                background-color: #f1f3f4;
+                border-radius: 20px;
+                font-size: 18px;
+                color: #2c3e50;
+            }
+            QPushButton:hover {
+                background-color: #e9ecef;
+            }
+            QPushButton:pressed {
+                background-color: #dee2e6;
+            }
+        """)
 
-    def __init__(self):
-        super().__init__()
+
+class FileAttachmentDialog(QDialog):
+    """Dialog para seleção e envio de arquivos"""
+
+    def __init__(self, parent=None, whatsapp_api=None, recipient=None):
+        super().__init__(parent)
+        self.whatsapp_api = whatsapp_api
+        self.recipient = recipient
+        self.file_path = ""
+
         self.setup_ui()
 
     def setup_ui(self):
-        """Configura o cabeçalho - SEM TOOLTIPS"""
-        self.setFixedHeight(75)  # Ligeiramente menor
+        """Configura interface do dialog"""
+        self.setWindowTitle("📎 Anexar Arquivo")
+        self.setFixedWidth(500)
         self.setStyleSheet("""
-            ChatHeader {
-                background: qlineargradient(x1:0, y1:0, x2:1, y2:0,
-                    stop:0 #667eea, stop:1 #764ba2);
-                border: none;
+            QDialog {
+                background-color: white;
             }
-        """)
-
-        layout = QHBoxLayout(self)
-        layout.setContentsMargins(20, 0, 20, 0)
-        layout.setSpacing(15)
-
-        # Avatar
-        self.avatar_label = QLabel()
-        self.avatar_label.setFixedSize(45, 45)  # Ligeiramente menor
-        self.avatar_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
-        self.avatar_label.setStyleSheet("""
-            QLabel {
-                background-color: #ffffff;
-                color: #667eea;
-                border-radius: 22px;
+            QPushButton {
+                background-color: #3498db;
+                color: white;
+                border: none;
+                border-radius: 5px;
+                padding: 8px 16px;
                 font-weight: bold;
-                font-size: 16px;
-            }
-        """)
-
-        # Informações do chat
-        info_layout = QVBoxLayout()
-        info_layout.setSpacing(2)
-
-        self.chat_name = QLabel("")
-        self.chat_name.setFont(QFont('Segoe UI', 14, QFont.Weight.Bold))  # Ligeiramente menor
-        self.chat_name.setStyleSheet("color: white; margin: 0;")
-
-        self.chat_status = QLabel("")
-        self.chat_status.setFont(QFont('Segoe UI', 9))
-        self.chat_status.setStyleSheet("color: #ecf0f1; margin: 0;")
-
-        info_layout.addWidget(self.chat_name)
-        info_layout.addWidget(self.chat_status)
-
-        # Botões de ação - SEM TOOLTIPS
-        actions_layout = QHBoxLayout()
-        actions_layout.setSpacing(8)
-
-        self.info_btn = QPushButton("ℹ️")
-        self.info_btn.setFixedSize(36, 36)  # Ligeiramente menor
-        self.info_btn.setStyleSheet("""
-            QPushButton {
-                background-color: rgba(255, 255, 255, 0.15);
-                border: none;
-                border-radius: 18px;
-                color: white;
-                font-size: 13px;
             }
             QPushButton:hover {
-                background-color: rgba(255, 255, 255, 0.25);
+                background-color: #2980b9;
             }
-            QPushButton:pressed {
-                background-color: rgba(255, 255, 255, 0.35);
+            QPushButton#sendButton {
+                background-color: #27ae60;
             }
-        """)
-        # REMOVIDO: setToolTip para evitar popups
-        self.info_btn.clicked.connect(self.info_clicked.emit)
-
-        self.refresh_btn = QPushButton("🔄")
-        self.refresh_btn.setFixedSize(36, 36)
-        self.refresh_btn.setStyleSheet("""
-            QPushButton {
-                background-color: rgba(255, 255, 255, 0.15);
-                border: none;
-                border-radius: 18px;
-                color: white;
-                font-size: 13px;
+            QPushButton#sendButton:hover {
+                background-color: #219653;
             }
-            QPushButton:hover {
-                background-color: rgba(255, 255, 255, 0.25);
+            QLabel {
+                font-size: 11px;
             }
-            QPushButton:pressed {
-                background-color: rgba(255, 255, 255, 0.35);
+            QLineEdit, QComboBox, QTextEdit {
+                border: 1px solid #bdc3c7;
+                border-radius: 5px;
+                padding: 8px;
             }
         """)
-        # REMOVIDO: setToolTip para evitar popups
 
-        actions_layout.addWidget(self.info_btn)
-        actions_layout.addWidget(self.refresh_btn)
+        layout = QVBoxLayout(self)
+        layout.setSpacing(10)
+
+        # Tipo de arquivo
+        type_layout = QHBoxLayout()
+
+        type_label = QLabel("Tipo de arquivo:")
+        self.file_type = QComboBox()
+        self.file_type.addItems([
+            "📷 Imagem",
+            "📄 Documento",
+            "🎵 Áudio",
+            "🎬 Vídeo/GIF"
+        ])
+
+        type_layout.addWidget(type_label)
+        type_layout.addWidget(self.file_type, 1)
+
+        # Caminho do arquivo
+        file_layout = QHBoxLayout()
+
+        self.file_path_input = QLineEdit()
+        self.file_path_input.setReadOnly(True)
+        self.file_path_input.setPlaceholderText("Nenhum arquivo selecionado")
+
+        browse_btn = QPushButton("Selecionar")
+        browse_btn.setFixedWidth(100)
+        browse_btn.clicked.connect(self.browse_file)
+
+        file_layout.addWidget(QLabel("Arquivo:"))
+        file_layout.addWidget(self.file_path_input, 1)
+        file_layout.addWidget(browse_btn)
+
+        # Legenda (opcional)
+        caption_label = QLabel("Legenda (opcional):")
+        self.caption_input = QTextEdit()
+        self.caption_input.setMaximumHeight(80)
+        self.caption_input.setPlaceholderText("Digite uma legenda para o arquivo...")
+
+        # Botões de ação
+        button_layout = QHBoxLayout()
+
+        cancel_btn = QPushButton("Cancelar")
+        cancel_btn.clicked.connect(self.reject)
+
+        self.send_btn = QPushButton("Enviar")
+        self.send_btn.setObjectName("sendButton")
+        self.send_btn.clicked.connect(self.accept)
+        self.send_btn.setEnabled(False)  # Inicialmente desabilitado
+
+        button_layout.addWidget(cancel_btn)
+        button_layout.addWidget(self.send_btn)
 
         # Montar layout
-        layout.addWidget(self.avatar_label)
-        layout.addLayout(info_layout, 1)
-        layout.addLayout(actions_layout)
+        layout.addLayout(type_layout)
+        layout.addLayout(file_layout)
+        layout.addWidget(caption_label)
+        layout.addWidget(self.caption_input)
+        layout.addLayout(button_layout)
 
-    def update_chat_info(self, chat_data: Dict):
-        """Atualiza informações do chat no cabeçalho"""
-        chat_name = chat_data.get('chat_name', 'Chat')
-        chat_type = chat_data.get('chat_type', 'individual')
-        total_messages = chat_data.get('total_messages', 0)
-        participants_count = chat_data.get('participants_count', 0)
+    def browse_file(self):
+        """Abre diálogo para selecionar arquivo"""
+        file_type = self.file_type.currentText()
 
-        # Atualizar nome
-        self.chat_name.setText(chat_name)
-
-        # Atualizar avatar
-        initial = chat_name[0].upper() if chat_name else '?'
-        self.avatar_label.setText(initial)
-
-        # Atualizar status
-        if chat_type == 'group':
-            status_text = f"Grupo • {participants_count} participantes • {total_messages} mensagens"
+        # Definir filtro baseado no tipo
+        if "Imagem" in file_type:
+            file_filter = "Imagens (*.jpg *.jpeg *.png *.gif);;Todos os arquivos (*.*)"
+        elif "Áudio" in file_type:
+            file_filter = "Áudio (*.mp3 *.wav *.ogg);;Todos os arquivos (*.*)"
+        elif "Vídeo" in file_type:
+            file_filter = "Vídeo (*.mp4 *.avi *.mov *.mkv);;GIF (*.gif);;Todos os arquivos (*.*)"
         else:
-            status_text = f"Contato • {total_messages} mensagens"
+            file_filter = "Todos os arquivos (*.*)"
 
-        self.chat_status.setText(status_text)
+        file_path, _ = QFileDialog.getOpenFileName(
+            self, "Selecionar Arquivo", "", file_filter
+        )
 
+        if file_path:
+            self.file_path = file_path
+            self.file_path_input.setText(file_path)
+            self.send_btn.setEnabled(True)  # Habilitar botão de envio
 
-class MessagesContainer(QScrollArea):
-    """Container otimizado para mensagens - VERSÃO SUAVIZADA"""
+            # Extrair nome do arquivo para legenda padrão
+            import os
+            file_name = os.path.basename(file_path)
 
-    def __init__(self):
-        super().__init__()
-        self.setup_ui()
-
-    def setup_ui(self):
-        """Configura o container de mensagens - MAIS SUAVE"""
-        self.setWidgetResizable(True)
-        self.setHorizontalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
-        self.setVerticalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAsNeeded)
-        self.setStyleSheet("""
-            QScrollArea {
-                border: none;
-                background-color: #f8f9fa;
-            }
-            QScrollBar:vertical {
-                background: #f1f3f4;
-                width: 8px;
-                border-radius: 4px;
-            }
-            QScrollBar::handle:vertical {
-                background: #dadce0;
-                border-radius: 4px;
-                min-height: 25px;
-            }
-            QScrollBar::handle:vertical:hover {
-                background: #bdc1c6;
-            }
-            QScrollBar::add-line:vertical,
-            QScrollBar::sub-line:vertical {
-                border: none;
-                background: none;
-            }
-        """)
-
-        # Widget interno para as mensagens
-        self.messages_widget = QWidget()
-        self.messages_widget.setStyleSheet("background-color: transparent;")
-
-        # Layout para as mensagens
-        self.messages_layout = QVBoxLayout(self.messages_widget)
-        self.messages_layout.setContentsMargins(8, 8, 8, 8)  # Margens menores
-        self.messages_layout.setSpacing(3)  # Espaçamento menor
-        self.messages_layout.setAlignment(Qt.AlignmentFlag.AlignTop)
-
-        # Definir o widget interno
-        self.setWidget(self.messages_widget)
-
-    def add_message_widget(self, widget):
-        """Adiciona um widget de mensagem ao container - SUAVIZADO"""
-        # Garantir que o widget seja visível
-        widget.setVisible(True)
-
-        # Adicionar ao layout
-        self.messages_layout.addWidget(widget)
-
-        # Atualizar geometria suavemente
-        self.messages_widget.updateGeometry()
-
-        # Processar eventos de forma não bloqueante
-        QApplication.processEvents()
-
-        # Rolar para o final com delay menor
-        QTimer.singleShot(50, self.scroll_to_bottom_smooth)
-
-    def clear_messages(self):
-        """Limpa todas as mensagens"""
-        while self.messages_layout.count() > 0:
-            child = self.messages_layout.takeAt(0)
-            if child.widget():
-                child.widget().deleteLater()
-
-        # Processar eventos para garantir limpeza
-        QApplication.processEvents()
-
-    def scroll_to_bottom_smooth(self):
-        """Rola suavemente para o final das mensagens"""
-        scrollbar = self.verticalScrollBar()
-
-        # Animação suave do scroll
-        current_value = scrollbar.value()
-        target_value = scrollbar.maximum()
-
-        if abs(target_value - current_value) > 10:
-            # Se a distância for grande, animar
-            self.scroll_animation = QPropertyAnimation(scrollbar, b"value")
-            self.scroll_animation.setDuration(200)
-            self.scroll_animation.setStartValue(current_value)
-            self.scroll_animation.setEndValue(target_value)
-            self.scroll_animation.setEasingCurve(QEasingCurve.Type.OutCubic)
-            self.scroll_animation.start()
-        else:
-            # Se for pequena, ir direto
-            scrollbar.setValue(target_value)
-
-    def scroll_to_bottom(self):
-        """Rola para o final das mensagens (versão rápida)"""
-        scrollbar = self.verticalScrollBar()
-        scrollbar.setValue(scrollbar.maximum())
-
-    def add_stretch(self):
-        """Adiciona stretch no final para empurrar mensagens para cima"""
-        self.messages_layout.addStretch()
+            # Se for documento, colocar nome como legenda padrão
+            if "Documento" in file_type and not self.caption_input.toPlainText():
+                self.caption_input.setPlainText(file_name)
 
 
 class MessageRenderer:
-    """Renderizador de mensagens para o chat - VERSÃO SUAVIZADA"""
+    """Renderizador avançado de mensagens para chat"""
 
     @staticmethod
-    def create_message_widget(message_data: Dict) -> QWidget:
+    def create_message_widget(message_data: Dict, whatsapp_api=None) -> QWidget:
         """
         Cria widget de mensagem baseado nos dados
 
         Args:
             message_data: Dados da mensagem do banco
+            whatsapp_api: Instância da API do WhatsApp para interações
 
         Returns:
             Widget da mensagem renderizada
         """
         from_me = message_data.get('from_me', False)
 
-        # Criar balão da mensagem
-        message_bubble = MessageBubble(message_data, is_from_me=from_me)
+        # Criar balão da mensagem com integração WhatsApp
+        message_bubble = MessageBubble(message_data, is_from_me=from_me, whatsapp_api=whatsapp_api)
 
         return message_bubble
 
@@ -664,57 +889,439 @@ class MessageRenderer:
         except:
             return date_str
 
-    @staticmethod
-    def create_chat_header() -> ChatHeader:
-        """Cria cabeçalho do chat"""
-        return ChatHeader()
 
-    @staticmethod
-    def create_messages_container() -> MessagesContainer:
-        """Cria container de mensagens"""
-        return MessagesContainer()
+class TypingIndicator(QWidget):
+    """Indicador de digitação"""
+
+    def __init__(self, contact_name: str = ""):
+        super().__init__()
+        self.contact_name = contact_name
+        self.setup_ui()
+
+    def setup_ui(self):
+        """Configura interface do indicador"""
+        layout = QHBoxLayout(self)
+        layout.setContentsMargins(20, 5, 20, 5)
+
+        # Cria bolinha de digitação
+        typing_widget = QWidget()
+        typing_widget.setFixedSize(80, 30)
+        typing_widget.setStyleSheet("""
+            background-color: #f0f0f0;
+            border-radius: 15px;
+        """)
+
+        # Layout interno
+        typing_layout = QHBoxLayout(typing_widget)
+        typing_layout.setContentsMargins(10, 0, 10, 0)
+        typing_layout.setSpacing(5)
+
+        # Bolinhas animadas
+        for i in range(3):
+            dot = QLabel("•")
+            dot.setStyleSheet("font-size: 18px; color: #555;")
+            typing_layout.addWidget(dot)
+
+            # Animar com timer
+            timer = QTimer(dot)
+            timer.timeout.connect(lambda d=dot: self._animate_dot(d))
+            timer.start(300 + i * 200)
+
+        # Label com nome
+        if self.contact_name:
+            name_label = QLabel(f"{self.contact_name} está digitando...")
+            name_label.setStyleSheet("color: #888; font-size: 10px; font-style: italic;")
+            layout.addWidget(name_label)
+            layout.addStretch(1)
+
+        layout.addWidget(typing_widget)
+        layout.addStretch(2)
+
+    def _animate_dot(self, dot: QLabel):
+        """Anima uma bolinha"""
+        current_opacity = 1.0 if dot.styleSheet().find("opacity") == -1 else 0.3
+        new_opacity = 0.3 if current_opacity == 1.0 else 1.0
+        dot.setStyleSheet(f"font-size: 18px; color: #555; opacity: {new_opacity};")
 
 
-# Exemplo de uso para testar a suavização
-if __name__ == "__main__":
-    import sys
+class MessagesContainer(QScrollArea):
+    """Container otimizado para mensagens"""
 
-    app = QApplication(sys.argv)
+    def __init__(self):
+        super().__init__()
+        self.setup_ui()
 
-    # Criar container de teste
-    container = MessagesContainer()
+    def setup_ui(self):
+        """Configura o container de mensagens"""
+        self.setWidgetResizable(True)
+        self.setHorizontalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
+        self.setVerticalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAsNeeded)
+        self.setStyleSheet("""
+            QScrollArea {
+                border: none;
+                background-color: #f8f9fa;
+            }
+            QScrollBar:vertical {
+                background: #f1f3f4;
+                width: 8px;
+                border-radius: 4px;
+            }
+            QScrollBar::handle:vertical {
+                background: #dadce0;
+                border-radius: 4px;
+                min-height: 25px;
+            }
+            QScrollBar::handle:vertical:hover {
+                background: #bdc1c6;
+            }
+            QScrollBar::add-line:vertical,
+            QScrollBar::sub-line:vertical {
+                border: none;
+                background: none;
+            }
+        """)
 
-    # Dados de teste
-    test_messages = [
-        {
-            'content': 'Olá! Como você está?',
-            'from_me': False,
-            'timestamp_str': '14:30',
-            'message_type': 'text',
-            'date_str': '07/06/2025'
-        },
-        {
-            'content': 'Estou bem, obrigado! E você?',
-            'from_me': True,
-            'timestamp_str': '14:32',
-            'message_type': 'text',
-            'date_str': '07/06/2025'
-        },
-        {
-            'content': 'Também estou bem! Viu as novidades?',
-            'from_me': False,
-            'timestamp_str': '14:35',
-            'message_type': 'text',
-            'date_str': '07/06/2025'
-        }
-    ]
+        # Widget interno para as mensagens
+        self.messages_widget = QWidget()
+        self.messages_widget.setStyleSheet("background-color: transparent;")
 
-    # Adicionar mensagens de teste
-    for msg in test_messages:
-        widget = MessageRenderer.create_message_widget(msg)
-        container.add_message_widget(widget)
+        # Layout para as mensagens
+        self.messages_layout = QVBoxLayout(self.messages_widget)
+        self.messages_layout.setContentsMargins(8, 8, 8, 8)
+        self.messages_layout.setSpacing(3)
+        self.messages_layout.setAlignment(Qt.AlignmentFlag.AlignTop)
 
-    container.resize(600, 400)
-    container.show()
+        # Definir o widget interno
+        self.setWidget(self.messages_widget)
 
-    sys.exit(app.exec())
+    def add_message_widget(self, widget):
+        """Adiciona um widget de mensagem ao container"""
+        # Garantir que o widget seja visível
+        widget.setVisible(True)
+
+        # Adicionar ao layout
+        self.messages_layout.addWidget(widget)
+
+        # Atualizar geometria
+        self.messages_widget.updateGeometry()
+
+        # Processar eventos
+        QApplication.processEvents()
+
+        # Rolar para o final
+        QTimer.singleShot(50, self.scroll_to_bottom)
+
+    def clear_messages(self):
+        """Limpa todas as mensagens"""
+        while self.messages_layout.count() > 0:
+            child = self.messages_layout.takeAt(0)
+            if child.widget():
+                child.widget().deleteLater()
+
+        # Processar eventos para garantir limpeza
+        QApplication.processEvents()
+
+    def scroll_to_bottom(self):
+        """Rola para o final das mensagens"""
+        scrollbar = self.verticalScrollBar()
+        scrollbar.setValue(scrollbar.maximum())
+
+    def add_stretch(self):
+        """Adiciona stretch no final para empurrar mensagens para cima"""
+        self.messages_layout.addStretch()
+
+
+class ChatInputArea(QWidget):
+    """Área de entrada de mensagens com suporte a anexos e emojis"""
+
+    # Sinais
+    message_send = pyqtSignal(str)  # Texto da mensagem
+    file_send = pyqtSignal(str, str, str)  # Tipo, caminho, legenda
+
+    def __init__(self, whatsapp_api=None, recipient=None):
+        super().__init__()
+        self.whatsapp_api = whatsapp_api
+        self.recipient = recipient
+        self.setup_ui()
+
+    def setup_ui(self):
+        """Configura interface do campo de entrada"""
+        self.setFixedHeight(70)
+        self.setStyleSheet("""
+            QWidget {
+                background-color: white;
+                border-top: 1px solid #e9ecef;
+            }
+        """)
+
+        # Layout principal
+        layout = QHBoxLayout(self)
+        layout.setContentsMargins(15, 10, 15, 10)
+        layout.setSpacing(10)
+
+        # Botão de anexo
+        self.attach_btn = AttachmentButton()
+        self.attach_btn.clicked.connect(self.show_attachment_dialog)
+
+        # Campo de texto
+        self.message_input = QTextEdit()
+        self.message_input.setPlaceholderText("Digite uma mensagem...")
+        self.message_input.setMaximumHeight(50)
+        self.message_input.setStyleSheet("""
+            QTextEdit {
+                border: 1px solid #e9ecef;
+                border-radius: 20px;
+                padding: 10px 15px;
+                font-size: 13px;
+            }
+        """)
+
+        # Conectar Enter para enviar (Shift+Enter para nova linha)
+        self.message_input.installEventFilter(self)
+
+        # Botão de emoji
+        self.emoji_btn = QPushButton("😀")
+        self.emoji_btn.setFixedSize(40, 40)
+        self.emoji_btn.setStyleSheet("""
+            QPushButton {
+                background-color: #f1f3f4;
+                border-radius: 20px;
+                font-size: 18px;
+            }
+            QPushButton:hover {
+                background-color: #e9ecef;
+            }
+        """)
+        self.emoji_btn.clicked.connect(self.show_emoji_picker)
+
+        # Botão de envio
+        self.send_btn = QPushButton("📤")
+        self.send_btn.setFixedSize(40, 40)
+        self.send_btn.clicked.connect(self.send_message)
+        self.send_btn.setStyleSheet("""
+            QPushButton {
+                background-color: #27ae60;
+                border-radius: 20px;
+                font-size: 18px;
+                color: white;
+            }
+            QPushButton:hover {
+                background-color: #219653;
+            }
+            QPushButton:disabled {
+                background-color: #bdc3c7;
+            }
+        """)
+
+        # Montar layout
+        layout.addWidget(self.attach_btn)
+        layout.addWidget(self.message_input, 1)
+        layout.addWidget(self.emoji_btn)
+        layout.addWidget(self.send_btn)
+
+    def eventFilter(self, obj, event):
+        """Filtro de eventos para detectar Enter no campo de texto"""
+        if obj is self.message_input and event.type() == QEvent.Type.KeyPress:
+            if event.key() == Qt.Key.Key_Return and not event.modifiers() & Qt.KeyboardModifier.ShiftModifier:
+                self.send_message()
+                return True
+        return super().eventFilter(obj, event)
+
+    def send_message(self):
+        """Envia mensagem de texto"""
+        text = self.message_input.toPlainText().strip()
+        if text:
+            self.message_send.emit(text)
+            self.message_input.clear()
+
+    def show_attachment_dialog(self):
+        """Mostra diálogo para anexar arquivo"""
+        dialog = FileAttachmentDialog(self, self.whatsapp_api, self.recipient)
+
+        if dialog.exec() == QDialog.DialogCode.Accepted and dialog.file_path:
+            # Obter tipo selecionado
+            file_type = dialog.file_type.currentText()
+
+            # Determinar tipo para API
+            if "Imagem" in file_type:
+                type_key = "image"
+            elif "Documento" in file_type:
+                type_key = "document"
+            elif "Áudio" in file_type:
+                type_key = "audio"
+            elif "Vídeo" in file_type:
+                type_key = "video"
+            else:
+                type_key = "document"  # Fallback
+
+            # Emitir sinal com informações do arquivo
+            caption = dialog.caption_input.toPlainText()
+            self.file_send.emit(type_key, dialog.file_path, caption)
+
+    def show_emoji_picker(self):
+        """Mostra seletor de emojis"""
+        # Lista de emojis comuns
+        emojis = [
+            "😀", "😂", "😍", "🤔", "😊", "👍", "❤️", "🎉",
+            "🔥", "😎", "🙏", "👏", "🤝", "💪", "🙄", "😢"
+        ]
+
+        # Criar menu
+        menu = QMenu(self)
+        menu.setStyleSheet("""
+            QMenu {
+                background-color: white;
+                border: 1px solid #e0e0e0;
+                border-radius: 8px;
+            }
+            QMenu::item {
+                padding: 8px;
+                font-size: 20px;
+            }
+            QMenu::item:selected {
+                background-color: #f0f0f0;
+            }
+        """)
+
+        # Layout de grade para emojis
+        grid_layout = QGridLayout()
+        grid_layout.setSpacing(2)
+
+        # Widget para o menu
+        grid_widget = QWidget()
+        grid_widget.setLayout(grid_layout)
+
+        # Adicionar emojis à grade
+        row, col = 0, 0
+        for emoji in emojis:
+            emoji_btn = QPushButton(emoji)
+            emoji_btn.setFixedSize(40, 40)
+            emoji_btn.setStyleSheet("QPushButton { border: none; font-size: 20px; }")
+            emoji_btn.clicked.connect(lambda checked, e=emoji: self.insert_emoji(e))
+
+            grid_layout.addWidget(emoji_btn, row, col)
+
+            col += 1
+            if col > 3:  # 4 colunas
+                col = 0
+                row += 1
+
+        # Adicionar widget ao menu
+        action = QWidgetAction(self)
+        action.setDefaultWidget(grid_widget)
+        menu.addAction(action)
+
+        # Mostrar menu
+        pos = self.emoji_btn.mapToGlobal(QPoint(0, -menu.sizeHint().height()))
+        menu.exec(pos)
+
+    def insert_emoji(self, emoji: str):
+        """Insere emoji no campo de texto"""
+        cursor = self.message_input.textCursor()
+        cursor.insertText(emoji)
+
+    def set_recipient(self, recipient: str):
+        """Define destinatário atual"""
+        self.recipient = recipient
+
+    def set_whatsapp_api(self, api):
+        """Define instância da API"""
+        self.whatsapp_api = api
+
+
+class ChatHeader(QWidget):
+    """Cabeçalho do chat com informações do contato"""
+
+    refresh_clicked = pyqtSignal()
+
+    def __init__(self):
+        super().__init__()
+        self.setup_ui()
+
+    def setup_ui(self):
+        """Configura interface do cabeçalho"""
+        self.setFixedHeight(70)
+        self.setStyleSheet("""
+            QWidget {
+                background: qlineargradient(x1:0, y1:0, x2:1, y2:0,
+                    stop:0 #3498db, stop:1 #2980b9);
+                border: none;
+            }
+        """)
+
+        layout = QHBoxLayout(self)
+        layout.setContentsMargins(20, 0, 20, 0)
+
+        # Avatar do contato
+        self.avatar_label = QLabel()
+        self.avatar_label.setFixedSize(45, 45)
+        self.avatar_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        self.avatar_label.setStyleSheet("""
+            QLabel {
+                background-color: #ffffff;
+                color: #3498db;
+                border-radius: 22px;
+                font-weight: bold;
+                font-size: 16px;
+            }
+        """)
+
+        # Informações do contato
+        info_layout = QVBoxLayout()
+        info_layout.setSpacing(2)
+
+        self.contact_name = QLabel("Selecione um contato")
+        self.contact_name.setFont(QFont('Segoe UI', 14, QFont.Weight.Bold))
+        self.contact_name.setStyleSheet("color: white; margin: 0;")
+
+        self.contact_status = QLabel("")
+        self.contact_status.setFont(QFont('Segoe UI', 9))
+        self.contact_status.setStyleSheet("color: #ecf0f1; margin: 0;")
+
+        info_layout.addWidget(self.contact_name)
+        info_layout.addWidget(self.contact_status)
+
+        # Botão de atualização
+        self.refresh_btn = QPushButton("🔄")
+        self.refresh_btn.setFixedSize(35, 35)
+        self.refresh_btn.setStyleSheet("""
+            QPushButton {
+                background-color: rgba(255, 255, 255, 0.2);
+                border: none;
+                border-radius: 17px;
+                color: white;
+                font-size: 14px;
+            }
+            QPushButton:hover {
+                background-color: rgba(255, 255, 255, 0.3);
+            }
+        """)
+        self.refresh_btn.clicked.connect(self.refresh_clicked)
+
+        # Montar layout
+        layout.addWidget(self.avatar_label)
+        layout.addLayout(info_layout, 1)
+        layout.addStretch()
+        layout.addWidget(self.refresh_btn)
+
+    def update_chat_info(self, chat_data: Dict):
+        """Atualiza informações do chat no cabeçalho"""
+        # Nome do contato
+        chat_name = chat_data.get('chat_name', 'Chat')
+        self.contact_name.setText(chat_name)
+
+        # Avatar (primeira letra)
+        initial = chat_name[0].upper() if chat_name else '?'
+        self.avatar_label.setText(initial)
+
+        # Status
+        chat_type = chat_data.get('chat_type', 'individual')
+        total_msgs = chat_data.get('total_messages', 0)
+
+        if chat_type == 'group':
+            participants = chat_data.get('participants_count', 0)
+            status_text = f"Grupo • {participants} participantes • {total_msgs} mensagens"
+        else:
+            status_text = f"Contato • {total_msgs} mensagens"
+
+        self.contact_status.setText(status_text)
