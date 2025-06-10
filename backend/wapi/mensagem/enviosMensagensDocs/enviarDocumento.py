@@ -5,7 +5,7 @@ import base64
 from pathlib import Path
 
 
-class WhatsAppDocuments:
+class EnviaDocumento:
     def __init__(self, base_url, instance_name, api_key):
         """
         Inicializa a classe para envio de documentos
@@ -166,69 +166,3 @@ class WhatsAppDocuments:
             }
 
 
-# Exemplo de uso prático
-if __name__ == "__main__":
-    # Suas configurações da API
-    BASE_URL = "https://api.w-api.app/v1"
-    INSTANCE_NAME = "LITE-YLOCZC-ZGHBVR"
-    API_KEY = "1paGyOfRfDdQLg5nnWyXvVoa9XDCB8VWr"
-
-    # Inicializar
-    whats_docs = WhatsAppDocuments(BASE_URL, INSTANCE_NAME, API_KEY)
-
-    # Número do destinatário
-    numero_destinatario = "5569993291093"
-
-    print("📄 ENVIO DE ARQUIVO LOCAL")
-    print("=" * 50)
-
-    # Exemplo 1: Enviar um PDF
-    arquivo_pdf = r"C:\Users\eliba\PycharmProjects\ZapFile\temp\doc.docx"  # Substitua pelo seu arquivo
-
-    # Verificar se o arquivo existe
-    info = whats_docs.obter_info_arquivo(arquivo_pdf)
-    print(f"Informações do arquivo: {json.dumps(info, indent=2, ensure_ascii=False)}")
-
-    if info['existe']:
-        resultado = whats_docs.enviar_arquivo_local(
-            telefone=numero_destinatario,
-            caminho_arquivo=arquivo_pdf,
-            legenda="Aqui está o relatório solicitado! 📊",
-            delay=10
-        )
-
-        if resultado['success']:
-            print("✅ Arquivo enviado com sucesso!")
-            print(f"Detalhes: {json.dumps(resultado['arquivo_info'], indent=2, ensure_ascii=False)}")
-        else:
-            print(f"❌ Erro ao enviar: {resultado['error']}")
-    else:
-        print("⚠️ Arquivo não encontrado. Verifique o caminho.")
-
-    print("\n📄 EXEMPLO COM DIFERENTES TIPOS DE ARQUIVO")
-    print("=" * 50)
-
-    # Lista de arquivos para testar
-    arquivos_teste = [
-        r"C:\Users\eliba\PycharmProjects\ZapFile\temp\pdf.pdf",
-        r"C:\Users\eliba\PycharmProjects\ZapFile\temp\txt.txt",
-        r"C:\Users\eliba\PycharmProjects\ZapFile\temp\doc.docx"
-    ]
-
-    for arquivo in arquivos_teste:
-        info = whats_docs.obter_info_arquivo(arquivo)
-        if info['existe']:
-            print(f"Enviando: {info['nome']} ({info['tamanho_mb']} MB)")
-
-            resultado = whats_docs.enviar_arquivo_local(
-                telefone=numero_destinatario,
-                caminho_arquivo=arquivo,
-                legenda=f"Arquivo: {info['nome']}"
-            )
-
-            if resultado['success']:
-                print(f"✅ {info['nome']} enviado!")
-            else:
-                print(f"❌ Erro ao enviar {info['nome']}: {resultado['error']}")
-        else:
-            print(f"⚠️ Arquivo não encontrado: {arquivo}")

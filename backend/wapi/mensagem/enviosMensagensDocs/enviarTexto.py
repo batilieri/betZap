@@ -7,7 +7,7 @@ logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(
 logger = logging.getLogger(__name__)
 
 
-class WhatsAppAPI:
+class EnviaTexto:
     def __init__(self, instance_id, api_token, base_url="https://api.w-api.app/v1/"):
         """
         Inicializa a classe WhatsAppAPI para interagir com a API W-API do WhatsApp
@@ -25,7 +25,7 @@ class WhatsAppAPI:
             "Authorization": f"Bearer {api_token}"
         }
 
-    def send_text_message(self, phone_number, message, delay_message=1):
+    def envia_mensagem_texto(self, phone_number, message, delay_message=1):
         """
         Envia uma mensagem de texto para um contato via WhatsApp
 
@@ -130,25 +130,3 @@ class WhatsAppAPI:
         self.running = False
 
 
-# Exemplo de uso
-if __name__ == "__main__":
-    # Configurações da API - substitua pelos seus dados reais
-    INSTANCE_ID = "LITE-YLOCZC-ZGHBVR"
-    API_TOKEN = "1paGyOfRfDdQLg5nnWyXvVoa9XDCB8VWr"
-
-    # Inicializa a API
-    whatsapp_api = WhatsAppAPI(INSTANCE_ID, API_TOKEN)
-    status = whatsapp_api.check_connection_status(api_token=API_TOKEN, id_instance=INSTANCE_ID)
-    print(status)
-    if status == "connected":
-        PHONE_NUMBER = "5569999267344"
-        MESSAGE = "Oi meu nenem fofinha."
-        result = whatsapp_api.send_text_message(PHONE_NUMBER, MESSAGE)
-        print("Resultado do envio:", result)
-    else:
-        PHONE_NUMBER = "5569999267344"
-        MESSAGE = "Você é o amor de minha vidaaa!"
-
-        # Envia a mensagem
-        result = whatsapp_api.send_text_message(PHONE_NUMBER, MESSAGE, delay_message=1)
-        print("Resultado do envio:", result)
