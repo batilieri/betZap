@@ -1,29 +1,425 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
 """
-Janela principal do chat fofo WhatsApp
-Integração completa com banco de dados em tempo real
+Janela principal INDEPENDENTE com integração WhatsApp API REAL
+Versão completa sem dependências circulares
 """
 
 import sys
 import os
-from typing import Dict, List, Optional
-from PyQt6.QtWidgets import QApplication, QMainWindow, QMessageBox
-from PyQt6.QtCore import QThread, pyqtSignal, QTimer
+import json
+from datetime import datetime
+from typing import Dict, List, Optional, Set
+from PyQt6.QtWidgets import (QApplication, QMainWindow, QMessageBox,
+                             QFileDialog, QProgressBar, QLabel, QInputDialog)
+from PyQt6.QtCore import QThread, pyqtSignal, QTimer, QPropertyAnimation, QEasingCurve
 from PyQt6.QtGui import QIcon
 
-# Importar nossos módulos
+# Importar nossos módulos principais
 from ui.main_window_ui import MainWindowUI, ContactItemWidget
 from ui.chat_widget import MessageRenderer, MessageBubble
 from database import ChatDatabaseInterface
 
+# Tentar importar WhatsApp API
+try:
+    from __whatsAppApi import WhatsAppAPI
 
-class DatabaseWorker(QThread):
-    """Worker thread para operações do banco de dados"""
+    WHATSAPP_API_AVAILABLE = True
+    print("✅ WhatsApp API disponível")
+except ImportError:
+    print("⚠️ WhatsApp API não encontrada")
+    WHATSAPP_API_AVAILABLE = False
 
-    # Sinais para comunicação com a UI
+
+    # Mock da API para desenvolvimento
+    class WhatsAppAPI:
+        def __init__(self, instance_id, api_token, base_url=""):
+            self.instance_id = instance_id
+            self.api_token = api_token
+
+        def checa_status_conexao(self, api_token, id_instance):
+            return "disconnected"
+
+        def envia_mensagem_texto(self, phone, message, delay=1):
+            return {"status": "mock", "message": "API não disponível"}
+
+
+class WhatsAppConfig:
+    """Configurações da API WhatsApp"""
+
+    def __init__(self):
+        self.INSTANCE_ID = "3B6XIW-ZTS923-GEAY6V"
+        self.API_TOKEN = "Q8EOH07SJkXhg4iT6Qmhz1BJdLl8nL9WF"
+        self.BASE_URL = "https://api.w-api.app/v1/"
+        self.load_from_file()
+
+    def load_from_file(self):
+        """Carrega configurações de arquivo JSON"""
+        config_file = "whatsapp_config.json"
+
+        if os.path.exists(config_file):
+            try:
+                with open(config_file, 'r') as f:
+                    config = json.load(f)
+
+                self.INSTANCE_ID = config.get('instance_id', self.INSTANCE_ID)
+                self.API_TOKEN = config.get('api_token', self.API_TOKEN)
+                self.BASE_URL = config.get('base_url', self.BASE_URL)
+
+                print(f"✅ Configurações carregadas de {config_file}")
+
+            except Exception as e:
+                print(f"⚠️ Erro ao carregar configurações: {e}")
+                self.save_to_file()
+        else:
+            self.save_to_file()
+
+    def save_to_file(self):
+        """Salva configurações em arquivo JSON"""
+        config = {
+            'instance_id': self.INSTANCE_ID,
+            'api_token': self.API_TOKEN,
+            'base_url': self.BASE_URL,
+            'created_at': datetime.now().isoformat()
+        }
+
+        try:
+            with open("whatsapp_config.json", 'w') as f:
+                json.dump(config, f, indent=2)
+            print("📄 Arquivo whatsapp_config.json criado")
+        except Exception as e:
+            print(f"⚠️ Erro ao salvar configurações: {e}")
+
+
+class WhatsAppMessageSender(QThread):
+    """Thread para envio de mensagens via WhatsApp API"""
+
+    # Sinais
+    message_sent = pyqtSignal(dict)
+    message_failed = pyqtSignal(str, str)
+    progress_update = pyqtSignal(int)
+    connection_status = pyqtSignal(bool)
+
+    def __init__(self):
+        super().__init__()
+
+        self.config = WhatsAppConfig()
+        self.whatsapp_api = None
+        self.message_queue = []
+        self.is_sending = False
+        self.stop_requested = False
+
+        self.init_api()
+
+    def init_api(self):
+        """Inicializa a API do WhatsApp"""
+        if not WHATSAPP_API_AVAILABLE:
+            print("❌ WhatsAppAPI não disponível")
+            return False
+
+        try:
+            self.whatsapp_api = WhatsAppAPI(
+                instance_id=self.config.INSTANCE_ID,
+                api_token=self.config.API_TOKEN,
+                base_url=self.config.BASE_URL
+            )
+
+            status = self.whatsapp_api.checa_status_conexao(
+                self.config.API_TOKEN,
+                self.config.INSTANCE_ID
+            )
+
+            connected = status == "connected"
+            self.connection_status.emit(connected)
+
+            if connected:
+                print("✅ WhatsApp API conectada")
+            else:
+                print("⚠️ WhatsApp API não conectada")
+
+            return connected
+
+        except Exception as e:
+            print(f"❌ Erro ao inicializar WhatsApp API: {e}")
+            self.connection_status.emit(False)
+            return False
+
+    def send_text_message_to_contact(self, contact_id: str, message: str):
+        """Envia mensagem de texto"""
+        if not message.strip():
+            return
+
+        message_data = {
+            'type': 'text',
+            'contact_id': self._format_phone_number(contact_id),
+            'content': message.strip(),
+            'timestamp': datetime.now().isoformat(),
+            'temp_id': f"temp_{int(datetime.now().timestamp() * 1000)}"
+        }
+
+        self.message_queue.append(message_data)
+        print(f"📝 Mensagem adicionada à fila: {contact_id}")
+
+        if not self.is_sending:
+            self.start()
+
+    def send_file_to_contact(self, contact_id: str, file_path: str, file_type: str, caption: str = ""):
+        """Envia arquivo"""
+        if not os.path.exists(file_path):
+            self.message_failed.emit(contact_id, f"Arquivo não encontrado: {file_path}")
+            return
+
+        message_data = {
+            'type': 'file',
+            'file_type': file_type,
+            'contact_id': self._format_phone_number(contact_id),
+            'file_path': file_path,
+            'caption': caption,
+            'timestamp': datetime.now().isoformat(),
+            'temp_id': f"temp_{int(datetime.now().timestamp() * 1000)}"
+        }
+
+        self.message_queue.append(message_data)
+        print(f"📎 Arquivo adicionado à fila: {file_type}")
+
+        if not self.is_sending:
+            self.start()
+
+    def run(self):
+        """Processa fila de mensagens"""
+        self.is_sending = True
+
+        while self.message_queue and not self.stop_requested:
+            message_data = self.message_queue.pop(0)
+
+            try:
+                self.progress_update.emit(0)
+                success = self._send_single_message(message_data)
+
+                if success:
+                    sent_message = self._create_sent_message_data(message_data)
+                    self.message_sent.emit(sent_message)
+                    self.progress_update.emit(100)
+                else:
+                    self.message_failed.emit(
+                        message_data['contact_id'],
+                        "Falha no envio"
+                    )
+
+            except Exception as e:
+                error_msg = f"Erro no envio: {str(e)}"
+                self.message_failed.emit(message_data['contact_id'], error_msg)
+
+            if self.message_queue:
+                self.msleep(500)
+
+        self.is_sending = False
+        self.progress_update.emit(0)
+
+    def _send_single_message(self, message_data: Dict) -> bool:
+        """Envia uma única mensagem"""
+        if not self.whatsapp_api:
+            return False
+
+        try:
+            if message_data['type'] == 'text':
+                result = self.whatsapp_api.envia_mensagem_texto(
+                    phone_number=message_data['contact_id'],
+                    message=message_data['content'],
+                    delay_message=1
+                )
+
+            elif message_data['type'] == 'file':
+                file_type = message_data['file_type']
+                file_path = message_data['file_path']
+                caption = message_data.get('caption', '')
+                contact_id = message_data['contact_id']
+
+                self.progress_update.emit(25)
+
+                if file_type == 'image':
+                    result = self.whatsapp_api.enviar_imagem(
+                        phone_number=contact_id,
+                        image_path=file_path,
+                        caption=caption
+                    )
+                elif file_type == 'document':
+                    result = self.whatsapp_api.envia_documento(
+                        phone_number=contact_id,
+                        file_path=file_path,
+                        caption=caption
+                    )
+                elif file_type == 'audio':
+                    result = self.whatsapp_api.enviar_audio(
+                        phone_number=contact_id,
+                        audio_source=file_path
+                    )
+                elif file_type == 'video':
+                    result = self.whatsapp_api.enviarGif(
+                        phone_number=contact_id,
+                        gif_source=file_path,
+                        caption=caption
+                    )
+                else:
+                    result = self.whatsapp_api.envia_documento(
+                        phone_number=contact_id,
+                        file_path=file_path,
+                        caption=caption
+                    )
+
+                self.progress_update.emit(75)
+
+            # Verificar resultado
+            if result and isinstance(result, dict):
+                print(f"✅ Mensagem enviada: {result}")
+                return True
+            else:
+                print(f"❌ Falha no envio: {result}")
+                return False
+
+        except Exception as e:
+            print(f"❌ Erro no envio: {e}")
+            return False
+
+    def _create_sent_message_data(self, message_data: Dict) -> Dict:
+        """Cria dados da mensagem enviada"""
+        timestamp = int(datetime.now().timestamp())
+
+        if message_data['type'] == 'text':
+            content = message_data['content']
+            message_type = 'text'
+            media_data = None
+        else:
+            file_path = message_data['file_path']
+            filename = os.path.basename(file_path)
+            caption = message_data.get('caption', '')
+
+            if caption:
+                content = f"{filename}: {caption}"
+            else:
+                content = filename
+
+            message_type = message_data['file_type']
+            media_data = {
+                'filename': filename,
+                'file_path': file_path,
+                'caption': caption
+            }
+
+        return {
+            'message_id': message_data['temp_id'],
+            'sender_name': 'Você',
+            'content': content,
+            'timestamp': timestamp,
+            'timestamp_str': datetime.fromtimestamp(timestamp).strftime('%H:%M'),
+            'date_str': datetime.fromtimestamp(timestamp).strftime('%d/%m/%Y'),
+            'from_me': True,
+            'is_group': False,
+            'message_type': message_type,
+            'media_data': media_data,
+            'sender_id': '',
+            'contact_id': message_data['contact_id']
+        }
+
+    def _format_phone_number(self, phone: str) -> str:
+        """Formata número de telefone"""
+        phone_clean = ''.join(filter(str.isdigit, phone))
+
+        if len(phone_clean) == 11 and not phone_clean.startswith('55'):
+            phone_clean = '55' + phone_clean
+        elif len(phone_clean) == 10 and not phone_clean.startswith('55'):
+            phone_clean = '55' + phone_clean
+
+        return phone_clean
+
+    def check_connection(self) -> bool:
+        """Verifica conexão"""
+        if not self.whatsapp_api:
+            return False
+
+        try:
+            status = self.whatsapp_api.checa_status_conexao(
+                self.config.API_TOKEN,
+                self.config.INSTANCE_ID
+            )
+
+            connected = status == "connected"
+            self.connection_status.emit(connected)
+            return connected
+
+        except Exception as e:
+            print(f"❌ Erro ao verificar conexão: {e}")
+            self.connection_status.emit(False)
+            return False
+
+    def stop_sending(self):
+        """Para envio"""
+        self.stop_requested = True
+        self.message_queue.clear()
+        self.is_sending = False
+
+
+class IncrementalUpdater(QThread):
+    """Thread para atualizações incrementais"""
+
+    new_messages_found = pyqtSignal(list)
+
+    def __init__(self, db_interface: ChatDatabaseInterface):
+        super().__init__()
+        self.db_interface = db_interface
+        self.is_running = True
+        self.current_contact_id = None
+        self.update_interval = 3000
+        self.check_count = 0
+
+    def set_current_contact(self, contact_id: str):
+        """Define contato atual"""
+        self.current_contact_id = contact_id
+        self.check_count = 0
+        print(f"🎯 Monitoramento ativo para: {contact_id[:15]}")
+
+    def run(self):
+        """Loop de verificação"""
+        while self.is_running:
+            try:
+                if self.current_contact_id:
+                    self.check_for_new_messages_incremental()
+                self.msleep(self.update_interval)
+            except Exception as e:
+                print(f"Erro no updater: {e}")
+                self.msleep(10000)
+
+    def check_for_new_messages_incremental(self):
+        """Verifica novas mensagens"""
+        if not self.current_contact_id:
+            return
+
+        try:
+            self.check_count += 1
+            new_messages = self.db_interface.get_new_messages_incremental(self.current_contact_id)
+
+            if new_messages:
+                print(f"📬 {len(new_messages)} novas mensagens")
+                self.new_messages_found.emit(new_messages)
+            else:
+                if self.check_count % 10 == 0:
+                    print(f"🔍 Verificação #{self.check_count}: sem novas mensagens")
+
+        except Exception as e:
+            print(f"Erro na verificação: {e}")
+
+    def stop(self):
+        """Para updater"""
+        self.is_running = False
+        self.quit()
+        self.wait()
+
+
+class OptimizedDatabaseWorker(QThread):
+    """Worker para operações do banco"""
+
     contacts_loaded = pyqtSignal(list)
-    messages_loaded = pyqtSignal(list)
+    messages_loaded_initial = pyqtSignal(list)
     error_occurred = pyqtSignal(str)
     connection_status_changed = pyqtSignal(bool)
 
@@ -35,16 +431,16 @@ class DatabaseWorker(QThread):
         self.is_running = True
 
     def set_task(self, task_name: str, **params):
-        """Define a tarefa a ser executada"""
+        """Define tarefa"""
         self.current_task = task_name
         self.task_params = params
 
     def run(self):
-        """Executa a tarefa atual"""
+        """Executa tarefa"""
         try:
             if not self.db_interface.is_connected():
                 self.connection_status_changed.emit(False)
-                self.error_occurred.emit("Banco de dados não conectado")
+                self.error_occurred.emit("Banco não conectado")
                 return
 
             self.connection_status_changed.emit(True)
@@ -53,11 +449,14 @@ class DatabaseWorker(QThread):
                 contacts = self.db_interface.get_contacts_list(50)
                 self.contacts_loaded.emit(contacts)
 
-            elif self.current_task == "load_messages":
+            elif self.current_task == "load_messages_initial":
                 contact_id = self.task_params.get('contact_id')
+                limit = self.task_params.get('limit', 30)
+
                 if contact_id:
-                    messages = self.db_interface.get_chat_messages(contact_id, 100)
-                    self.messages_loaded.emit(messages)
+                    print(f"⚡ Carregando mensagens para {contact_id[:15]}")
+                    messages = self.db_interface.get_chat_messages_initial(contact_id, limit)
+                    self.messages_loaded_initial.emit(messages)
                 else:
                     self.error_occurred.emit("ID do contato não fornecido")
 
@@ -65,219 +464,574 @@ class DatabaseWorker(QThread):
             self.error_occurred.emit(f"Erro na operação: {str(e)}")
 
     def stop(self):
-        """Para o worker thread"""
+        """Para worker"""
         self.is_running = False
         self.quit()
         self.wait()
 
 
-class WhatsAppChatWindow(QMainWindow):
-    """Janela principal do chat fofo"""
+class WhatsAppChatMainWindow(QMainWindow):
+    """Janela principal INDEPENDENTE com WhatsApp"""
 
     def __init__(self):
         super().__init__()
 
-        # Inicializar banco de dados
+        # Inicializar banco
         self.db_interface = ChatDatabaseInterface()
 
         # Configurar UI
         self.ui = MainWindowUI(self)
 
-        # Worker thread para banco
-        self.db_worker = DatabaseWorker(self.db_interface)
-        self.setup_database_connections()
+        # Criar workers
+        self.message_sender = WhatsAppMessageSender()
+        self.db_worker = OptimizedDatabaseWorker(self.db_interface)
+        self.incremental_updater = IncrementalUpdater(self.db_interface)
 
-        # Estado atual
+        # Conectar sinais
+        self.setup_database_connections()
+        self.setup_whatsapp_connections()
+        self.setup_updater_connections()
+        self.setup_ui_connections()
+
+        # Estado
         self.current_contact = None
         self.current_contact_data = None
         self.loaded_contacts = {}
+        self.is_loading_messages = False
+        self.messages_loaded_count = 0
 
-        # Timer para atualizações automáticas
+        # Timers
         self.refresh_timer = QTimer()
-        self.refresh_timer.timeout.connect(self.auto_refresh)
-        self.refresh_timer.start(30000)  # A cada 30 segundos
+        self.refresh_timer.timeout.connect(self.auto_refresh_contacts)
+        self.refresh_timer.start(60000)
 
-        # Conectar sinais da UI
-        self.setup_ui_connections()
+        self.whatsapp_status_timer = QTimer()
+        self.whatsapp_status_timer.timeout.connect(self.message_sender.check_connection)
+        self.whatsapp_status_timer.start(30000)
 
-        # Carregar dados iniciais
+        # Carregar dados
         self.load_initial_data()
+        self.incremental_updater.start()
+
+        # Verificação inicial WhatsApp
+        QTimer.singleShot(2000, self.message_sender.check_connection)
 
     def setup_database_connections(self):
-        """Configura conexões com o worker do banco"""
+        """Conecta sinais do banco"""
         self.db_worker.contacts_loaded.connect(self.on_contacts_loaded)
-        self.db_worker.messages_loaded.connect(self.on_messages_loaded)
+        self.db_worker.messages_loaded_initial.connect(self.on_messages_loaded_initial)
         self.db_worker.error_occurred.connect(self.on_database_error)
-        self.db_worker.connection_status_changed.connect(self.on_connection_status_changed)
+        self.db_worker.connection_status_changed.connect(self.on_db_connection_status_changed)
+
+    def setup_whatsapp_connections(self):
+        """Conecta sinais do WhatsApp"""
+        self.message_sender.message_sent.connect(self.on_whatsapp_message_sent)
+        self.message_sender.message_failed.connect(self.on_whatsapp_message_failed)
+        self.message_sender.progress_update.connect(self.on_whatsapp_progress)
+        self.message_sender.connection_status.connect(self.on_whatsapp_connection_status)
+
+    def setup_updater_connections(self):
+        """Conecta sinais do updater"""
+        self.incremental_updater.new_messages_found.connect(self.on_new_messages_received_incremental)
 
     def setup_ui_connections(self):
-        """Configura conexões da interface"""
-        # Botão de refresh no cabeçalho do chat
+        """Conecta sinais da UI"""
         self.ui.refresh_btn.clicked.connect(self.refresh_current_chat)
-
-        # Busca de contatos
         self.ui.search_input.textChanged.connect(self.filter_contacts)
+        self.ui.send_btn.clicked.connect(self.send_whatsapp_text_message)
+        self.ui.attach_btn.clicked.connect(self.send_whatsapp_file)
+        self.ui.message_input.returnPressed.connect(self.send_whatsapp_text_message)
 
-        # Atalho de debug (Ctrl+D)
+        # Atalhos
         from PyQt6.QtGui import QShortcut, QKeySequence
+
         debug_shortcut = QShortcut(QKeySequence("Ctrl+D"), self)
         debug_shortcut.activated.connect(self.show_debug_info)
 
+        whatsapp_shortcut = QShortcut(QKeySequence("Ctrl+W"), self)
+        whatsapp_shortcut.activated.connect(self.show_whatsapp_config)
+
+    def send_whatsapp_text_message(self):
+        """Envia mensagem via WhatsApp"""
+        if not self.current_contact:
+            QMessageBox.warning(self, "Aviso", "Selecione um contato primeiro")
+            return
+
+        message_text = self.ui.message_input.text().strip()
+        if not message_text:
+            return
+
+        # Limpar input
+        self.ui.message_input.clear()
+
+        # Desabilitar botão
+        self.ui.send_btn.setEnabled(False)
+        self.ui.send_btn.setText("📤...")
+
+        # Enviar
+        try:
+            self.message_sender.send_text_message_to_contact(
+                contact_id=self.current_contact,
+                message=message_text
+            )
+            print(f"📱 Enviando: {message_text[:50]}...")
+
+        except Exception as e:
+            QMessageBox.critical(self, "Erro", f"Erro ao enviar: {str(e)}")
+            self.ui.send_btn.setEnabled(True)
+            self.ui.send_btn.setText("📤")
+
+    def send_whatsapp_file(self):
+        """Envia arquivo via WhatsApp"""
+        if not self.current_contact:
+            QMessageBox.warning(self, "Aviso", "Selecione um contato primeiro")
+            return
+
+        # Selecionar arquivo
+        file_path, _ = QFileDialog.getOpenFileName(
+            self,
+            "Selecionar Arquivo para WhatsApp",
+            "",
+            "Imagens (*.png *.jpg *.jpeg *.gif *.webp);;Documentos (*.pdf *.doc *.docx *.txt);;Áudios (*.mp3 *.wav *.ogg);;Vídeos (*.mp4 *.avi *.mov);;Todos (*.*)"
+        )
+
+        if not file_path:
+            return
+
+        # Determinar tipo
+        file_ext = os.path.splitext(file_path)[1].lower()
+
+        if file_ext in ['.png', '.jpg', '.jpeg', '.gif', '.webp']:
+            file_type = 'image'
+        elif file_ext in ['.mp4', '.avi', '.mov', '.webm']:
+            file_type = 'video'
+        elif file_ext in ['.mp3', '.wav', '.ogg', '.m4a']:
+            file_type = 'audio'
+        else:
+            file_type = 'document'
+
+        # Perguntar legenda
+        caption = ""
+        if file_type in ['image', 'video']:
+            caption, ok = QInputDialog.getText(
+                self,
+                "Legenda",
+                f"Legenda para {os.path.basename(file_path)} (opcional):"
+            )
+            if not ok:
+                return
+
+        # Desabilitar botão
+        self.ui.attach_btn.setEnabled(False)
+        self.ui.attach_btn.setText("📤...")
+
+        # Enviar
+        try:
+            self.message_sender.send_file_to_contact(
+                contact_id=self.current_contact,
+                file_path=file_path,
+                file_type=file_type,
+                caption=caption if caption else ""
+            )
+
+            print(f"📎 Enviando {file_type}: {os.path.basename(file_path)}")
+
+        except Exception as e:
+            QMessageBox.critical(self, "Erro", f"Erro ao enviar arquivo: {str(e)}")
+            self.ui.attach_btn.setEnabled(True)
+            self.ui.attach_btn.setText("📎")
+
+    def on_whatsapp_message_sent(self, message_data: Dict):
+        """Mensagem WhatsApp enviada"""
+        print(f"✅ Mensagem WhatsApp enviada: {message_data.get('content', '')[:50]}")
+
+        # Reabilitar botões
+        self.ui.send_btn.setEnabled(True)
+        self.ui.send_btn.setText("📤")
+        self.ui.attach_btn.setEnabled(True)
+        self.ui.attach_btn.setText("📎")
+
+        # Adicionar à interface
+        try:
+            message_widget = MessageRenderer.create_message_widget(
+                message_data,
+                whatsapp_api=self.message_sender.whatsapp_api
+            )
+            if message_widget:
+                self.add_single_message_to_chat(message_widget, message_data, is_sent=True)
+
+        except Exception as e:
+            print(f"Erro ao adicionar mensagem à UI: {e}")
+
+    def on_whatsapp_message_failed(self, contact_id: str, error_message: str):
+        """Falha no envio WhatsApp"""
+        print(f"❌ Falha WhatsApp para {contact_id}: {error_message}")
+
+        # Reabilitar botões
+        self.ui.send_btn.setEnabled(True)
+        self.ui.send_btn.setText("📤")
+        self.ui.attach_btn.setEnabled(True)
+        self.ui.attach_btn.setText("📎")
+
+        # Mostrar erro
+        QMessageBox.critical(self, "Erro WhatsApp", f"Falha no envio:\n{error_message}")
+
+    def on_whatsapp_progress(self, progress: int):
+        """Progresso do envio"""
+        if progress < 100:
+            self.ui.send_btn.setText(f"📤")
+            self.ui.attach_btn.setText(f"📤")
+
+    def on_whatsapp_connection_status(self, connected: bool):
+        """Status da conexão WhatsApp"""
+        if connected:
+            print("✅ WhatsApp conectado")
+        else:
+            print("❌ WhatsApp desconectado")
+
+    def show_whatsapp_config(self):
+        """Mostra configurações WhatsApp"""
+        from PyQt6.QtWidgets import QDialog, QVBoxLayout, QHBoxLayout, QLineEdit, QPushButton, QLabel, QTextEdit
+
+        dialog = QDialog(self)
+        dialog.setWindowTitle("⚙️ Configurações WhatsApp")
+        dialog.setFixedWidth(500)
+
+        layout = QVBoxLayout(dialog)
+
+        # Instance ID
+        layout.addWidget(QLabel("Instance ID:"))
+        instance_input = QLineEdit(self.message_sender.config.INSTANCE_ID)
+        layout.addWidget(instance_input)
+
+        # API Token
+        layout.addWidget(QLabel("API Token:"))
+        token_input = QLineEdit(self.message_sender.config.API_TOKEN)
+        token_input.setEchoMode(QLineEdit.EchoMode.Password)
+        layout.addWidget(token_input)
+
+        # Base URL
+        layout.addWidget(QLabel("Base URL:"))
+        url_input = QLineEdit(self.message_sender.config.BASE_URL)
+        layout.addWidget(url_input)
+
+        # Status
+        layout.addWidget(QLabel("Status:"))
+        status_text = QTextEdit()
+        status_text.setMaximumHeight(80)
+        status_text.setReadOnly(True)
+
+        try:
+            connected = self.message_sender.check_connection()
+            if connected:
+                status_text.setText("✅ Conectado!")
+            else:
+                status_text.setText("❌ Não conectado")
+        except:
+            status_text.setText("⚠️ Erro na verificação")
+
+        layout.addWidget(status_text)
+
+        # Botões
+        button_layout = QHBoxLayout()
+
+        test_btn = QPushButton("🧪 Testar")
+        test_btn.clicked.connect(lambda: self.test_connection(status_text))
+
+        save_btn = QPushButton("💾 Salvar")
+        save_btn.clicked.connect(lambda: self.save_config(
+            instance_input.text(),
+            token_input.text(),
+            url_input.text(),
+            dialog
+        ))
+
+        cancel_btn = QPushButton("❌ Cancelar")
+        cancel_btn.clicked.connect(dialog.reject)
+
+        button_layout.addWidget(test_btn)
+        button_layout.addWidget(save_btn)
+        button_layout.addWidget(cancel_btn)
+
+        layout.addLayout(button_layout)
+
+        dialog.exec()
+
+    def test_connection(self, status_widget):
+        """Testa conexão"""
+        status_widget.setText("🔄 Testando...")
+        QApplication.processEvents()
+
+        try:
+            connected = self.message_sender.check_connection()
+            if connected:
+                status_widget.setText("✅ Teste OK!")
+            else:
+                status_widget.setText("❌ Teste falhou")
+        except Exception as e:
+            status_widget.setText(f"⚠️ Erro: {str(e)}")
+
+    def save_config(self, instance_id: str, api_token: str, base_url: str, dialog):
+        """Salva configurações"""
+        if not all([instance_id.strip(), api_token.strip(), base_url.strip()]):
+            QMessageBox.warning(dialog, "Erro", "Todos os campos são obrigatórios")
+            return
+
+        try:
+            self.message_sender.config.INSTANCE_ID = instance_id.strip()
+            self.message_sender.config.API_TOKEN = api_token.strip()
+            self.message_sender.config.BASE_URL = base_url.strip()
+
+            # Salvar em arquivo
+            self.message_sender.config.save_to_file()
+
+            # Reinicializar API
+            self.message_sender.init_api()
+
+            QMessageBox.information(dialog, "Sucesso", "Configurações salvas!")
+            dialog.accept()
+
+        except Exception as e:
+            QMessageBox.critical(dialog, "Erro", f"Erro ao salvar: {str(e)}")
+
+    # ========== MÉTODOS DO BANCO E INTERFACE ==========
+
     def load_initial_data(self):
         """Carrega dados iniciais"""
-        print("📥 Carregando lista de contatos...")
+        print("📥 Carregando contatos...")
         self.ui.show_welcome_screen()
 
         if self.db_interface.is_connected():
             self.db_worker.set_task("load_contacts")
             self.db_worker.start()
         else:
-            QMessageBox.warning(self, "Erro de Conexão",
-                                "Não foi possível conectar ao banco de dados.\n"
-                                "Verifique se o arquivo existe em: backend/banco/whatsapp_webhook_realtime.db")
+            QMessageBox.warning(self, "Erro", "Não foi possível conectar ao banco")
 
-    def on_connection_status_changed(self, connected: bool):
-        """Atualiza status de conexão na UI"""
+    def on_db_connection_status_changed(self, connected: bool):
+        """Status do banco"""
         self.ui.update_connection_status(connected)
 
-        if connected:
-            print("✅ Conectado ao banco de dados")
-        else:
-            print("❌ Desconectado do banco de dados")
-
     def on_contacts_loaded(self, contacts: List[Dict]):
-        """Chamado quando contatos são carregados"""
+        """Contatos carregados"""
         print(f"📋 {len(contacts)} contatos carregados")
 
-        # Limpar lista atual
         self.ui.clear_contacts_list()
         self.loaded_contacts.clear()
 
-        # Adicionar contatos à lista
         for contact_data in contacts:
             contact_widget = self.ui.add_contact_to_list(contact_data)
             contact_widget.clicked.connect(self.on_contact_selected)
 
-            # Salvar referência
             contact_id = contact_data['contact_id']
             self.loaded_contacts[contact_id] = contact_data
 
-        print("✅ Lista de contatos atualizada")
+        print("✅ Lista atualizada")
 
     def on_contact_selected(self, contact_id: str):
-        """Chamado quando um contato é selecionado"""
+        """Contato selecionado"""
         if contact_id not in self.loaded_contacts:
-            print(f"⚠️ Contato {contact_id} não encontrado na lista")
             return
 
         contact_data = self.loaded_contacts[contact_id]
+        print(f"👤 Selecionado: {contact_data['contact_name']}")
 
-        print(f"👤 Contato selecionado: {contact_data['contact_name']} ({contact_id})")
-
-        # Atualizar estado atual
         self.current_contact = contact_id
         self.current_contact_data = contact_data
+
+        # Configurar updater
+        self.incremental_updater.set_current_contact(contact_id)
 
         # Atualizar UI
         self.ui.show_chat_screen()
         self.ui.update_active_contact(contact_data)
-        self.ui.clear_messages()
+        self.clear_messages_display()
+
+        # Habilitar controles
+        self.ui.message_input.setEnabled(True)
+        self.ui.send_btn.setEnabled(True)
+        self.ui.attach_btn.setEnabled(True)
 
         # Carregar mensagens
-        print(f"📨 Carregando mensagens do chat...")
-        self.db_worker.set_task("load_messages", contact_id=contact_id)
+        self.is_loading_messages = True
+        self.messages_loaded_count = 0
 
-        # Aguardar thread anterior terminar se necessário
+        self.db_worker.set_task("load_messages_initial", contact_id=contact_id, limit=30)
+
         if self.db_worker.isRunning():
             self.db_worker.wait()
 
         self.db_worker.start()
 
-    def on_messages_loaded(self, messages: List[Dict]):
-        """Chamado quando mensagens são carregadas"""
+    def on_messages_loaded_initial(self, messages: List[Dict]):
+        """Mensagens iniciais carregadas"""
         if not self.current_contact:
             return
 
-        print(f"💬 {len(messages)} mensagens carregadas para {self.current_contact}")
+        print(f"💬 {len(messages)} mensagens carregadas")
+        self.is_loading_messages = False
 
-        # Limpar mensagens atuais
-        self.ui.clear_messages()
+        self.clear_messages_display()
 
         if not messages:
-            # Nenhuma mensagem encontrada
-            self.add_system_message("Nenhuma mensagem encontrada com este contato.")
+            self.add_system_message("Nenhuma mensagem encontrada")
             return
 
-        # Renderizar mensagens com separadores de data
+        # Renderizar mensagens
         previous_message = None
+        self.messages_loaded_count = 0
 
         for i, message_data in enumerate(messages):
-            print(f"  Processando mensagem {i + 1}: {message_data.get('content', '')[:50]}...")
-
-            # Verificar se precisa de separador de data
+            # Separador de data
             if MessageRenderer.should_show_date_separator(message_data, previous_message):
                 date_str = message_data.get('date_str', '')
                 if date_str:
                     formatted_date = MessageRenderer.format_date_separator(date_str)
                     date_separator = MessageRenderer.create_date_separator(formatted_date)
-                    self.add_widget_to_chat(date_separator)
-                    print(f"    + Separador de data: {formatted_date}")
+                    self.add_widget_to_chat_initial(date_separator)
 
-            # Criar e adicionar mensagem
+            # Criar mensagem
             try:
-                message_widget = MessageRenderer.create_message_widget(message_data)
+                message_widget = MessageRenderer.create_message_widget(
+                    message_data,
+                    whatsapp_api=self.message_sender.whatsapp_api
+                )
                 if message_widget:
-                    self.add_widget_to_chat(message_widget)
-                    print(f"    + Mensagem adicionada: {type(message_widget).__name__}")
-
-                    # Animar entrada se for MessageBubble
                     if isinstance(message_widget, MessageBubble):
-                        QTimer.singleShot(50 * i, message_widget.animate_in)
-                else:
-                    print(f"    ! Falha ao criar widget da mensagem")
+                        message_widget.message_date = message_data.get('date_str', '')
+
+                    self.add_widget_to_chat_initial(message_widget)
+                    self.messages_loaded_count += 1
+
+                    # Animar
+                    if isinstance(message_widget, MessageBubble):
+                        QTimer.singleShot(20 * i, message_widget.animate_in)
+
             except Exception as e:
-                print(f"    ❌ Erro ao criar mensagem: {e}")
+                print(f"Erro ao criar mensagem: {e}")
                 continue
 
             previous_message = message_data
 
-        # Adicionar stretch no final para empurrar mensagens para cima
+        # Stretch final
         self.ui.messages_layout.addStretch()
 
-        # Atualizar geometria e rolar para o final
+        # Atualizar geometria
         self.ui.messages_widget.updateGeometry()
         self.ui.messages_scroll.updateGeometry()
 
-        # Rolar para o final após um pequeno delay
         QTimer.singleShot(200, self.ui.scroll_to_bottom)
 
-        print(f"✅ {len(messages)} mensagens renderizadas na interface")
+        print(f"✅ {self.messages_loaded_count} mensagens renderizadas")
 
-    def on_database_error(self, error_message: str):
-        """Chamado quando ocorre erro no banco"""
-        print(f"❌ Erro no banco: {error_message}")
+    def on_new_messages_received_incremental(self, new_messages: List[Dict]):
+        """Novas mensagens incrementais"""
+        if not new_messages:
+            return
 
-        # Mostrar erro na UI se for crítico
-        if "conectar" in error_message.lower() or "banco" in error_message.lower():
-            QMessageBox.critical(self, "Erro do Banco de Dados",
-                                 f"Erro ao acessar banco de dados:\n{error_message}")
+        print(f"📨 {len(new_messages)} novas mensagens")
 
-    def add_widget_to_chat(self, widget):
-        """Adiciona widget à área de mensagens"""
-        # Garantir que o widget seja visível
+        for message_data in new_messages:
+            try:
+                message_widget = MessageRenderer.create_message_widget(
+                    message_data,
+                    whatsapp_api=self.message_sender.whatsapp_api
+                )
+                if message_widget:
+                    self.add_single_message_to_chat(message_widget, message_data, is_new=True)
+
+            except Exception as e:
+                print(f"Erro ao adicionar nova mensagem: {e}")
+
+    def add_single_message_to_chat(self, widget, message_data: Dict, is_sent: bool = False, is_new: bool = False):
+        """Adiciona uma mensagem"""
+        try:
+            # Verificar separador de data
+            need_date_separator = False
+            last_widget_date = None
+
+            if self.ui.messages_layout.count() > 1:
+                for i in range(self.ui.messages_layout.count() - 1, -1, -1):
+                    item = self.ui.messages_layout.itemAt(i)
+                    if item and item.widget():
+                        last_widget = item.widget()
+                        if isinstance(last_widget, MessageBubble):
+                            last_widget_date = getattr(last_widget, 'message_date', None)
+                            break
+
+            current_date = message_data.get('date_str', '')
+            if current_date and last_widget_date and current_date != last_widget_date:
+                need_date_separator = True
+            elif current_date and not last_widget_date:
+                need_date_separator = True
+
+            # Remover stretch
+            stretch_item = None
+            if self.ui.messages_layout.count() > 0:
+                last_item = self.ui.messages_layout.itemAt(self.ui.messages_layout.count() - 1)
+                if last_item and last_item.spacerItem():
+                    stretch_item = self.ui.messages_layout.takeAt(self.ui.messages_layout.count() - 1)
+
+            # Adicionar separador
+            if need_date_separator:
+                formatted_date = MessageRenderer.format_date_separator(current_date)
+                date_separator = MessageRenderer.create_date_separator(formatted_date)
+                if date_separator:
+                    date_separator.setVisible(True)
+                    date_separator.show()
+                    self.ui.messages_layout.addWidget(date_separator)
+
+            # Adicionar mensagem
+            widget.setVisible(True)
+            widget.show()
+
+            if isinstance(widget, MessageBubble):
+                widget.message_date = current_date
+
+            self.ui.messages_layout.addWidget(widget)
+
+            # Readicionar stretch
+            if stretch_item:
+                self.ui.messages_layout.addItem(stretch_item)
+            else:
+                self.ui.messages_layout.addStretch()
+
+            self.messages_loaded_count += 1
+            self.ui.messages_widget.updateGeometry()
+
+            # Animar
+            if isinstance(widget, MessageBubble):
+                if is_new or is_sent:
+                    QTimer.singleShot(50, widget.animate_in)
+
+            # Scroll
+            if is_new or is_sent:
+                QTimer.singleShot(100, self.ui.scroll_to_bottom)
+
+            print(f"✅ Mensagem adicionada. Total: {self.messages_loaded_count}")
+
+        except Exception as e:
+            print(f"❌ Erro ao adicionar mensagem: {e}")
+
+    def add_widget_to_chat_initial(self, widget):
+        """Adiciona widget inicial"""
         widget.setVisible(True)
         widget.show()
-
-        # Adicionar ao layout
         self.ui.messages_layout.addWidget(widget)
-
-        # Forçar atualização do layout
         self.ui.messages_widget.updateGeometry()
-        self.ui.messages_scroll.updateGeometry()
 
-        # Processar eventos pendentes
-        from PyQt6.QtWidgets import QApplication
+    def clear_messages_display(self):
+        """Limpa mensagens"""
+        while self.ui.messages_layout.count() > 0:
+            child = self.ui.messages_layout.takeAt(0)
+            if child.widget():
+                child.widget().deleteLater()
+
+        self.messages_loaded_count = 0
         QApplication.processEvents()
+
+    def on_database_error(self, error_message: str):
+        """Erro no banco"""
+        print(f"❌ Erro no banco: {error_message}")
 
     def add_system_message(self, message: str):
         """Adiciona mensagem do sistema"""
@@ -288,7 +1042,7 @@ class WhatsAppChatWindow(QMainWindow):
         system_label = QLabel(message)
         system_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
         system_label.setFont(QFont('Segoe UI', 10))
-        system_label.setMinimumHeight(40)  # Altura mínima
+        system_label.setMinimumHeight(40)
         system_label.setStyleSheet("""
             QLabel {
                 color: #95a5a6;
@@ -300,25 +1054,20 @@ class WhatsAppChatWindow(QMainWindow):
             }
         """)
 
-        # Garantir visibilidade
         system_label.setVisible(True)
         system_label.show()
-
-        self.add_widget_to_chat(system_label)
-        print(f"📝 Mensagem do sistema adicionada: {message}")
+        self.add_widget_to_chat_initial(system_label)
 
     def filter_contacts(self, search_text: str):
-        """Filtra contatos baseado no texto de busca"""
+        """Filtra contatos"""
         search_text = search_text.lower().strip()
 
-        # Se busca vazia, mostrar todos
         if not search_text:
             for i in range(self.ui.contacts_list.count()):
                 item = self.ui.contacts_list.item(i)
                 item.setHidden(False)
             return
 
-        # Filtrar contatos
         for i in range(self.ui.contacts_list.count()):
             item = self.ui.contacts_list.item(i)
             widget = self.ui.contacts_list.itemWidget(item)
@@ -328,7 +1077,6 @@ class WhatsAppChatWindow(QMainWindow):
                 name = contact_data.get('contact_name', '').lower()
                 contact_id = contact_data.get('contact_id', '').lower()
 
-                # Verificar se corresponde à busca
                 should_show = (search_text in name or
                                search_text in contact_id or
                                search_text in contact_data.get('last_message', '').lower())
@@ -336,169 +1084,114 @@ class WhatsAppChatWindow(QMainWindow):
                 item.setHidden(not should_show)
 
     def refresh_current_chat(self):
-        """Atualiza o chat atual"""
-        if self.current_contact:
-            print(f"🔄 Atualizando chat: {self.current_contact}")
+        """Refresh do chat"""
+        if self.current_contact and not self.is_loading_messages:
+            print(f"🔄 Refresh: {self.current_contact}")
 
-            # Parar worker se estiver rodando
-            if self.db_worker.isRunning():
-                print("⏳ Aguardando thread anterior...")
-                self.db_worker.wait()
+            if self.incremental_updater.isRunning():
+                self.incremental_updater.check_for_new_messages_incremental()
 
-            # Carregar mensagens novamente
-            self.db_worker.set_task("load_messages", contact_id=self.current_contact)
-            self.db_worker.start()
-        else:
-            # Atualizar lista de contatos
-            print("🔄 Atualizando lista de contatos")
+            try:
+                new_messages = self.db_interface.get_new_messages_incremental(self.current_contact)
+                if new_messages:
+                    self.on_new_messages_received_incremental(new_messages)
+                else:
+                    print("✅ Sem novas mensagens")
+            except Exception as e:
+                print(f"❌ Erro no refresh: {e}")
 
-            # Parar worker se estiver rodando
-            if self.db_worker.isRunning():
-                print("⏳ Aguardando thread anterior...")
-                self.db_worker.wait()
-
+    def auto_refresh_contacts(self):
+        """Auto refresh contatos"""
+        if not self.db_worker.isRunning() and not self.is_loading_messages:
+            print("🔄 Auto-refresh contatos")
             self.db_worker.set_task("load_contacts")
             self.db_worker.start()
 
-    def auto_refresh(self):
-        """Atualização automática periódica"""
-        # Só atualizar se não estiver fazendo outra operação
-        if not self.db_worker.isRunning():
-            # Se tem chat ativo, atualizar mensagens
-            if self.current_contact:
-                print("🔄 Auto-refresh: atualizando mensagens")
-                self.refresh_current_chat()
-            else:
-                # Senão, atualizar lista de contatos
-                print("🔄 Auto-refresh: atualizando contatos")
-                self.load_initial_data()
-        else:
-            print("⏳ Auto-refresh pulado - thread ocupada")
-
     def show_debug_info(self):
-        """Mostra informações de debug"""
+        """Debug info"""
         if self.current_contact:
             layout_count = self.ui.messages_layout.count()
-            print(f"🔍 DEBUG INFO:")
-            print(f"   Contato atual: {self.current_contact}")
-            print(f"   Widgets no layout: {layout_count}")
-            print(f"   Área de mensagens visível: {self.ui.messages_widget.isVisible()}")
-            print(f"   Área de scroll visível: {self.ui.messages_scroll.isVisible()}")
+            cache_stats = self.db_interface.get_cache_stats()
 
-            # Listar widgets no layout
-            for i in range(layout_count):
-                item = self.ui.messages_layout.itemAt(i)
-                if item and item.widget():
-                    widget = item.widget()
-                    print(f"   Widget {i}: {type(widget).__name__} - Visível: {widget.isVisible()}")
-        else:
-            print("🔍 DEBUG: Nenhum contato selecionado")
-
-    def show_database_stats(self):
-        """Mostra estatísticas do banco de dados"""
-        stats = self.db_interface.get_database_stats()
-
-        if stats:
-            stats_text = f"""
-📊 Estatísticas do Banco de Dados:
-
-📁 Arquivo: {stats.get('database_path', 'N/A')}
-💾 Tamanho: {stats.get('database_size_mb', 0)} MB
-📨 Total de eventos: {stats.get('total_events', 0):,}
-👥 Total de remetentes: {stats.get('total_senders', 0):,}
-💬 Total de chats: {stats.get('total_chats', 0):,}
-
-📅 Primeira mensagem: {stats.get('first_message_date', 'N/A')}
-🕐 Última mensagem: {stats.get('last_message_date', 'N/A')}
-            """
-
-            QMessageBox.information(self, "Estatísticas do Banco", stats_text)
-        else:
-            QMessageBox.warning(self, "Erro", "Não foi possível obter estatísticas do banco")
+            print(f"🔍 DEBUG:")
+            print(f"   Contato: {self.current_contact}")
+            print(f"   Widgets: {layout_count}")
+            print(f"   Mensagens: {self.messages_loaded_count}")
+            print(f"   Cache: {cache_stats}")
+            print(f"   WhatsApp API: {'Disponível' if self.message_sender.whatsapp_api else 'Indisponível'}")
 
     def closeEvent(self, event):
-        """Evento de fechamento da janela"""
-        print("👋 Encerrando aplicação...")
+        """Fechamento"""
+        print("👋 Encerrando...")
 
-        # Parar timer
+        # Parar timers
         self.refresh_timer.stop()
+        self.whatsapp_status_timer.stop()
 
-        # Parar worker thread
+        # Parar threads
         if self.db_worker.isRunning():
             self.db_worker.stop()
+
+        self.message_sender.stop_sending()
+
+        if self.incremental_updater.isRunning():
+            self.incremental_updater.stop()
 
         event.accept()
 
 
 def main():
     """Função principal"""
-    # Criar aplicação
     app = QApplication(sys.argv)
 
-    # Configurar aplicação
-    app.setApplicationName("WhatsApp Chat Interface")
-    app.setApplicationVersion("1.0.0")
+    app.setApplicationName("WhatsApp Chat - API Real Integrada")
+    app.setApplicationVersion("3.0.0")
     app.setOrganizationName("Chat Analytics")
 
-    # Configurar ícone se disponível
     try:
         app.setWindowIcon(QIcon("icon.png"))
     except:
         pass
 
-    # Verificar se arquivos necessários existem
-    required_files = [
-        os.path.join('backend', 'banco', 'database_manager_updated.py'),
-        os.path.join('backend', 'banco', 'models_updated.py')
-    ]
-
-    missing_files = []
-    for file_path in required_files:
-        if not os.path.exists(file_path):
-            missing_files.append(file_path)
-
-    if missing_files:
-        print("❌ Arquivos necessários não encontrados:")
-        for file in missing_files:
-            print(f"   - {file}")
-        print("\n📁 Estrutura esperada:")
-        print("   projeto/")
-        print("   ├── main_window.py")
-        print("   ├── database.py")
-        print("   ├── ui/")
-        print("   │   ├── main_window_ui.py")
-        print("   │   └── chat_widget.py")
-        print("   └── backend/")
-        print("       └── banco/")
-        print("           ├── models_updated.py")
-        print("           ├── database_manager_updated.py")
-        print("           └── whatsapp_webhook_realtime.db")
-
-        # Ainda assim tenta executar
-        print("\n⚠️ Tentando executar mesmo assim...")
-
-    # Criar e mostrar janela principal
     try:
-        window = WhatsAppChatWindow()
+        window = WhatsAppChatMainWindow()
         window.show()
 
-        print("🎉 Interface do chat iniciada!")
-        print("💡 Recursos disponíveis:")
-        print("   - Lista de contatos com busca")
-        print("   - Visualização de mensagens por contato")
-        print("   - Design fofo com cores pastéis")
-        print("   - Atualização automática a cada 30 segundos")
-        print("   - Suporte a todos os tipos de mensagem")
-        print("\n📝 TODO - Funcionalidades futuras:")
-        print("   - Envio de mensagens")
-        print("   - Anexo de arquivos")
-        print("   - Notificações de novas mensagens")
+        print("🎉 Interface WhatsApp iniciada!")
+        print("💡 RECURSOS:")
 
-        # Executar aplicação
+        if WHATSAPP_API_AVAILABLE:
+            print("   ✅ WhatsApp API REAL disponível")
+            print("   ✅ Envio real de mensagens")
+            print("   ✅ Envio real de arquivos")
+            print("   ✅ Verificação de conexão")
+        else:
+            print("   ⚠️ WhatsApp API não disponível")
+
+        print("   ✅ Interface sem recarregamento")
+        print("   ✅ Cache inteligente")
+        print("   ✅ Atualizações incrementais")
+
+        print("\n⌨️ CONTROLES:")
+        print("   📱 Digite mensagens e pressione Enter")
+        print("   📎 Clique para anexar arquivos")
+        print("   ⚙️ Ctrl+W: Configurações WhatsApp")
+        print("   🔍 Ctrl+D: Debug")
+
+        print(f"\n📊 STATUS:")
+        print(f"   WhatsApp API: {'🟢 Disponível' if WHATSAPP_API_AVAILABLE else '🔴 Indisponível'}")
+
+        if WHATSAPP_API_AVAILABLE:
+            print("\n🔧 PRIMEIRA CONFIGURAÇÃO:")
+            print("   1. Pressione Ctrl+W para configurar")
+            print("   2. Digite Instance ID e API Token")
+            print("   3. Teste a conexão")
+            print("   4. Comece a enviar mensagens!")
+
         sys.exit(app.exec())
 
     except Exception as e:
-        print(f"❌ Erro ao iniciar aplicação: {e}")
+        print(f"❌ Erro: {e}")
         import traceback
         traceback.print_exc()
 
@@ -507,57 +1200,40 @@ if __name__ == '__main__':
     main()
 
 # =============================================================================
-# 🎨 INTERFACE DE CHAT FOFA - WHATSAPP
+# 🎨 INTERFACE WHATSAPP INDEPENDENTE - SEM DEPENDÊNCIAS CIRCULARES
 # =============================================================================
 #
-# 📋 ARQUIVOS NECESSÁRIOS:
-# - main_window.py (este arquivo - controlador principal)
-# - database.py (integração com banco)
-# - ui/main_window_ui.py (layout da interface)
-# - ui/chat_widget.py (balões de mensagem fofos)
-# - backend/banco/database_manager_updated.py (gerenciador do banco)
-# - backend/banco/models_updated.py (modelos do banco)
-# - backend/banco/whatsapp_webhook_realtime.db (banco SQLite)
+# 📋 PRINCIPAIS CORREÇÕES:
+# ✅ Arquivo independente sem imports circulares
+# ✅ Classes OptimizedDatabaseWorker e IncrementalUpdater incluídas
+# ✅ WhatsAppMessageSender integrado
+# ✅ WhatsAppConfig para configurações
+# ✅ Interface completa de configuração (Ctrl+W)
+# ✅ Tratamento de erros robusto
+# ✅ Mock da API quando não disponível
 #
-# 🚀 COMO EXECUTAR:
-# python main_window.py
+# 🔧 ESTRUTURA:
+# - WhatsAppConfig: Gerencia configurações (whatsapp_config.json)
+# - WhatsAppMessageSender: Thread para envio via API real
+# - IncrementalUpdater: Thread para atualizações incrementais
+# - OptimizedDatabaseWorker: Thread para operações do banco
+# - WhatsAppChatMainWindow: Janela principal integrada
 #
-# 🎯 RECURSOS IMPLEMENTADOS:
-# ✅ Interface fofa com cores pastéis
-# ✅ Lista de contatos com busca
-# ✅ Balões de mensagem estilo Messenger
-# ✅ Integração completa com banco SQLite
-# ✅ Suporte a todos os tipos de mensagem
-# ✅ Separadores de data automáticos
-# ✅ Atualização automática
-# ✅ Design responsivo
-# ✅ Animações suaves
-# ✅ Sombras e bordas arredondadas
+# 🎯 FUNCIONALIDADES:
+# ✅ Envio real de mensagens de texto
+# ✅ Envio real de arquivos (imagem, documento, áudio, vídeo)
+# ✅ Verificação de status de conexão
+# ✅ Configuração visual completa
+# ✅ Cache inteligente sem recarregamento
+# ✅ Atualizações incrementais suaves
+# ✅ Tratamento específico de erros
+# ✅ Feedback visual de progresso
 #
-# 🔮 TODO - PRÓXIMAS FUNCIONALIDADES:
-# 🔲 Envio de mensagens (campo desabilitado)
-# 🔲 Anexo de arquivos (botão desabilitado)
-# 🔲 Notificações de novas mensagens
-# 🔲 Busca dentro das mensagens
-# 🔲 Export de conversas
-# 🔲 Configurações de tema
-#
-# 🎨 DESIGN:
-# - Cores pastéis (azul, rosa, verde menta)
-# - Bordas arredondadas em tudo
-# - Sombras suaves nos balões
-# - Ícones fofos para tipos de mídia
-# - Avatares coloridos baseados no nome
-# - Gradientes suaves nos cabeçalhos
-#
-# 📱 TIPOS DE MENSAGEM SUPORTADOS:
-# - 💬 Texto/emoji
-# - 🏷️ Stickers
-# - 📷 Imagens (com caption)
-# - 🎥 Vídeos (com caption)
-# - 🎵 Áudios
-# - 📄 Documentos (com preview)
-# - 📍 Localizações (com nome/endereço)
-# - 📊 Enquetes (com opções)
+# 🚀 USO:
+# 1. Execute: python main_window_independent.py
+# 2. Configure WhatsApp: Ctrl+W
+# 3. Selecione um contato
+# 4. Digite mensagens ou anexe arquivos
+# 5. Mensagens são enviadas via API real!
 #
 # =============================================================================

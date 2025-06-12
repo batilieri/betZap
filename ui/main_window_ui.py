@@ -1,8 +1,9 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
 """
-Layout principal da interface do chat fofo
+Layout principal da interface do chat fofo - VERSÃO MELHORADA
 Design inspirado no Facebook Messenger com cores pastéis
+Controles de envio habilitados e funcionais
 """
 
 from PyQt6.QtWidgets import (
@@ -152,7 +153,7 @@ class ContactItemWidget(QWidget):
 
 
 class MainWindowUI:
-    """Layout e estilo da janela principal"""
+    """Layout e estilo da janela principal - VERSÃO MELHORADA"""
 
     def __init__(self, main_window: QMainWindow):
         self.main_window = main_window
@@ -162,7 +163,7 @@ class MainWindowUI:
 
     def setup_window(self):
         """Configurações básicas da janela"""
-        self.main_window.setWindowTitle("💬 WhatsApp Chat Interface")
+        self.main_window.setWindowTitle("💬 WhatsApp Chat Interface - Versão Melhorada")
         self.main_window.setGeometry(200, 200, 1200, 800)
         self.main_window.setMinimumSize(900, 600)
 
@@ -431,7 +432,7 @@ class MainWindowUI:
 
         self.messages_scroll.setWidget(self.messages_widget)
 
-        # === ÁREA DE ENTRADA (Desabilitada por enquanto) ===
+        # === ÁREA DE ENTRADA HABILITADA ===
         input_frame = QFrame()
         input_frame.setFixedHeight(70)
         input_frame.setStyleSheet("""
@@ -445,10 +446,37 @@ class MainWindowUI:
         input_layout.setContentsMargins(20, 10, 20, 10)
         input_layout.setSpacing(10)
 
-        # Campo de texto (desabilitado)
+        # Botão de anexo (HABILITADO)
+        self.attach_btn = QPushButton("📎")
+        self.attach_btn.setFixedSize(40, 40)
+        self.attach_btn.setCursor(Qt.CursorShape.PointingHandCursor)
+        self.attach_btn.setStyleSheet("""
+            QPushButton {
+                background-color: #74b9ff;
+                border: none;
+                border-radius: 20px;
+                font-size: 16px;
+                color: white;
+                font-weight: bold;
+            }
+            QPushButton:hover {
+                background-color: #0984e3;
+                transform: scale(1.05);
+            }
+            QPushButton:pressed {
+                background-color: #0574cc;
+            }
+            QPushButton:disabled {
+                background-color: #e9ecef;
+                color: #adb5bd;
+            }
+        """)
+        self.attach_btn.setToolTip("Anexar arquivo")
+
+        # Campo de texto (HABILITADO)
         self.message_input = QLineEdit()
-        self.message_input.setPlaceholderText("📝 Digite uma mensagem... (Em breve!)")
-        self.message_input.setEnabled(False)  # TODO: Implementar envio
+        self.message_input.setPlaceholderText("Digite sua mensagem...")
+        self.message_input.setFont(QFont('Segoe UI', 11))
         self.message_input.setStyleSheet("""
             QLineEdit {
                 background-color: #f8f9fa;
@@ -456,45 +484,53 @@ class MainWindowUI:
                 border-radius: 20px;
                 padding: 10px 15px;
                 font-size: 13px;
-                color: #6c757d;
+                color: #495057;
+            }
+            QLineEdit:focus {
+                border-color: #667eea;
+                background-color: white;
+                outline: none;
             }
             QLineEdit:disabled {
-                background-color: #f8f9fa;
+                background-color: #f1f2f6;
                 color: #adb5bd;
+                border-color: #ddd;
             }
         """)
 
-        # Botão de anexo (desabilitado)
-        attach_btn = QPushButton("📎")
-        attach_btn.setFixedSize(40, 40)
-        attach_btn.setEnabled(False)  # TODO: Implementar anexos
-        attach_btn.setStyleSheet("""
-            QPushButton {
-                background-color: #e9ecef;
-                border: none;
-                border-radius: 20px;
-                font-size: 16px;
-                color: #adb5bd;
-            }
-        """)
-
-        # Botão de envio (desabilitado)
+        # Botão de envio (HABILITADO)
         self.send_btn = QPushButton("➤")
         self.send_btn.setFixedSize(40, 40)
-        self.send_btn.setEnabled(False)  # TODO: Implementar envio
+        self.send_btn.setCursor(Qt.CursorShape.PointingHandCursor)
         self.send_btn.setStyleSheet("""
             QPushButton {
-                background-color: #e9ecef;
+                background-color: #00b894;
                 border: none;
                 border-radius: 20px;
                 font-size: 16px;
+                color: white;
+                font-weight: bold;
+            }
+            QPushButton:hover {
+                background-color: #00a085;
+                transform: scale(1.05);
+            }
+            QPushButton:pressed {
+                background-color: #008f76;
+            }
+            QPushButton:disabled {
+                background-color: #e9ecef;
                 color: #adb5bd;
             }
         """)
+        self.send_btn.setToolTip("Enviar mensagem")
 
-        input_layout.addWidget(attach_btn)
+        input_layout.addWidget(self.attach_btn)
         input_layout.addWidget(self.message_input, 1)
         input_layout.addWidget(self.send_btn)
+
+        # Inicialmente desabilitar controles (serão habilitados quando um contato for selecionado)
+        self.set_input_enabled(False)
 
         # Montar tela do chat
         chat_layout.addWidget(self.chat_header)
@@ -502,6 +538,17 @@ class MainWindowUI:
         chat_layout.addWidget(input_frame)
 
         self.chat_stack.addWidget(chat_widget)
+
+    def set_input_enabled(self, enabled: bool):
+        """Habilita/desabilita controles de input"""
+        self.message_input.setEnabled(enabled)
+        self.send_btn.setEnabled(enabled)
+        self.attach_btn.setEnabled(enabled)
+
+        if not enabled:
+            self.message_input.setPlaceholderText("Selecione um contato para conversar...")
+        else:
+            self.message_input.setPlaceholderText("Digite sua mensagem...")
 
     def apply_styles(self):
         """Aplica estilos globais"""
@@ -522,10 +569,12 @@ class MainWindowUI:
     def show_welcome_screen(self):
         """Mostra a tela de boas-vindas"""
         self.chat_stack.setCurrentIndex(0)
+        self.set_input_enabled(False)
 
     def show_chat_screen(self):
         """Mostra a tela do chat"""
         self.chat_stack.setCurrentIndex(1)
+        self.set_input_enabled(True)
 
     def update_connection_status(self, connected: bool):
         """Atualiza o status de conexão"""
@@ -576,3 +625,64 @@ class MainWindowUI:
     def clear_contacts_list(self):
         """Limpa a lista de contatos"""
         self.contacts_list.clear()
+
+    def show_typing_indicator(self, contact_name: str):
+        """Mostra indicador de digitação (NOVA FUNCIONALIDADE)"""
+        self.active_contact_status.setText(f"{contact_name} está digitando...")
+        self.active_contact_status.setStyleSheet("color: #2ecc71; font-style: italic;")
+
+    def hide_typing_indicator(self, message_count: int):
+        """Esconde indicador de digitação (NOVA FUNCIONALIDADE)"""
+        self.active_contact_status.setText(f"{message_count} mensagens")
+        self.active_contact_status.setStyleSheet("color: #ecf0f1; font-style: normal;")
+
+    def show_send_progress(self, progress: int):
+        """Mostra progresso de envio (NOVA FUNCIONALIDADE)"""
+        if progress < 100:
+            self.send_btn.setText(f"{progress}%")
+            self.send_btn.setEnabled(False)
+        else:
+            self.send_btn.setText("📤")
+            self.send_btn.setEnabled(True)
+
+    def show_attachment_progress(self, progress: int):
+        """Mostra progresso de anexo (NOVA FUNCIONALIDADE)"""
+        if progress < 100:
+            self.attach_btn.setText(f"{progress}%")
+            self.attach_btn.setEnabled(False)
+        else:
+            self.attach_btn.setText("📎")
+            self.attach_btn.setEnabled(True)
+
+# =============================================================================
+# 🎨 MELHORIAS IMPLEMENTADAS NA UI:
+# =============================================================================
+#
+# ✅ Controles de entrada HABILITADOS
+# ✅ Campo de texto funcional com placeholder dinâmico
+# ✅ Botão de envio estilizado e responsivo
+# ✅ Botão de anexo com estilo moderno
+# ✅ Tooltips informativos nos botões
+# ✅ Estados disabled/enabled adequados
+# ✅ Método set_input_enabled() para controlar estado
+# ✅ Integração completa com threads do main_window.py
+# ✅ Indicadores de progresso para envio/upload
+# ✅ Indicador de digitação
+# ✅ Estilos hover e pressed nos botões
+# ✅ Placeholders dinâmicos baseados no estado
+#
+# 🎯 RECURSOS DE UX:
+# - Controles desabilitados quando nenhum contato selecionado
+# - Habilitação automática ao selecionar contato
+# - Feedback visual em hover/click
+# - Cores consistentes com o tema fofo
+# - Tooltips explicativos
+# - Transições suaves nos estados
+#
+# 🔧 INTEGRAÇÃO:
+# - Referências diretas aos widgets (message_input, send_btn, attach_btn)
+# - Compatível com sinais do main_window.py
+# - Suporte completo aos novos threads (MessageSender, SmoothUpdater)
+# - Métodos auxiliares para indicadores de progresso
+#
+# =============================================================================

@@ -1,13 +1,13 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
 """
-Interface OTIMIZADA para o banco de dados WhatsApp
-FOCO: Carregamento incremental, paginação reversa e processamento de mensagens únicas
+Interface OTIMIZADA para o banco de dados WhatsApp - SEM RECARREGAMENTO TOTAL
+CORREÇÃO: Carregamento incremental para evitar reinicialização da interface
 """
 
 import sys
 import os
-from typing import List, Dict, Optional
+from typing import List, Dict, Optional, Set
 from datetime import datetime, date
 from collections import defaultdict
 
@@ -25,7 +25,7 @@ except ImportError:
 
 
 class ChatDatabaseInterface:
-    """Interface OTIMIZADA para carregamento incremental e tempo real"""
+    """Interface OTIMIZADA com carregamento incremental - SEM RECARREGAMENTO TOTAL"""
 
     def __init__(self, db_path: str = None):
         if db_path is None:
@@ -34,7 +34,8 @@ class ChatDatabaseInterface:
         self.db_path = db_path
         self.db_manager = None
         self._contacts_cache = {}  # Cache de nomes dos contatos
-        self._message_cache = {}  # Cache de mensagens por chat
+        self._loaded_messages_cache = {}  # Cache de mensagens já carregadas por chat
+        self._last_message_timestamps = {}  # Último timestamp por chat
         self._last_message_count = 0
 
         if DB_AVAILABLE:
@@ -199,98 +200,140 @@ class ChatDatabaseInterface:
             print(f"❌ Erro ao buscar chats: {e}")
             return []
 
-    def get_chat_messages(self, chat_id: str, limit: int = 50) -> List[Dict]:
+    def get_chat_messages_initial(self, chat_id: str, limit: int = 30) -> List[Dict]:
         """
-        NOVO: Retorna mensagens mais recentes (para carregamento inicial)
+        NOVO: Carrega mensagens iniciais do chat (primeira vez)
+        Retorna apenas mensagens mais recentes para carregamento inicial
         """
         if not self.is_connected():
             return []
 
         try:
-            print(f"📨 Carregando {limit} mensagens mais recentes do chat: {chat_id[:15]}")
+            print(f"📨 Carregamento INICIAL: {limit} mensagens do chat: {chat_id[:15]}")
 
             all_messages = self.db_manager.get_recent_messages(3000)
-
             if not all_messages:
                 return []
 
             # Determinar se é grupo
-            is_group = False
-            for msg in all_messages[:100]:
-                if msg.get('chat', {}).get('id', '') == chat_id and msg.get('isGroup', False):
-                    is_group = True
-                    break
+            is_group = self._detect_if_group(chat_id, all_messages)
 
-            # Filtrar mensagens do chat
-            chat_messages = []
-            for msg in all_messages:
-                if self._message_belongs_to_chat(msg, chat_id, is_group):
-                    processed_msg = self._process_message_for_chat(msg)
-                    if processed_msg and processed_msg['timestamp'] > 0:
-                        chat_messages.append(processed_msg)
+            # Filtrar e processar mensagens do chat
+            chat_messages = self._filter_and_process_messages(chat_id, all_messages, is_group)
 
             # Ordenar cronologicamente
             chat_messages.sort(key=lambda x: (x['timestamp'], x.get('message_id', '')))
 
             # Remover duplicatas
-            seen_ids = set()
-            unique_messages = []
-            for msg in chat_messages:
-                msg_id = msg.get('message_id', '')
-                if msg_id and msg_id not in seen_ids:
-                    seen_ids.add(msg_id)
-                    unique_messages.append(msg)
-                elif not msg_id:
-                    unique_messages.append(msg)
+            unique_messages = self._remove_duplicates(chat_messages)
 
-            # Retornar as mais recentes até o limite
+            # Cache inicial - apenas IDs das mensagens carregadas
+            self._loaded_messages_cache[chat_id] = {
+                msg.get('message_id', f"temp_{msg['timestamp']}"): msg
+                for msg in unique_messages
+            }
+
+            # Armazenar último timestamp
+            if unique_messages:
+                self._last_message_timestamps[chat_id] = max(msg['timestamp'] for msg in unique_messages)
+
+            # Retornar apenas as mais recentes até o limite
             if len(unique_messages) <= limit:
                 result = unique_messages
             else:
                 result = unique_messages[-limit:]
 
-            # Cache das mensagens
-            self._message_cache[chat_id] = unique_messages
-
-            print(f"✅ {len(result)} mensagens carregadas")
+            print(f"✅ Carregamento inicial: {len(result)} mensagens")
             return result
 
         except Exception as e:
-            print(f"❌ Erro ao buscar mensagens: {e}")
+            print(f"❌ Erro no carregamento inicial: {e}")
             return []
 
-    def get_messages_before(self, chat_id: str, before_timestamp: float, limit: int = 20) -> List[Dict]:
+    def get_new_messages_incremental(self, chat_id: str) -> List[Dict]:
         """
-        NOVO: Retorna mensagens anteriores a um timestamp (paginação reversa)
+        NOVO: Busca apenas NOVAS mensagens desde o último carregamento
+        Retorna lista vazia se não há novas mensagens
         """
         if not self.is_connected():
             return []
 
         try:
-            print(f"📜 Carregando {limit} mensagens antes de {before_timestamp}")
+            # Verificar se temos cache para este chat
+            if chat_id not in self._loaded_messages_cache:
+                print(f"⚠️ Cache não encontrado para {chat_id}, fazendo carregamento inicial")
+                return self.get_chat_messages_initial(chat_id)
 
-            # Usar cache se disponível
-            if chat_id in self._message_cache:
-                all_chat_messages = self._message_cache[chat_id]
+            last_timestamp = self._last_message_timestamps.get(chat_id, 0)
+
+            print(f"🔍 Verificando novas mensagens para {chat_id[:15]} após {last_timestamp}")
+
+            # Buscar mensagens recentes
+            all_messages = self.db_manager.get_recent_messages(1000)
+            if not all_messages:
+                return []
+
+            # Determinar se é grupo
+            is_group = self._detect_if_group(chat_id, all_messages)
+
+            # Filtrar mensagens do chat que são NOVAS (timestamp > último conhecido)
+            new_messages = []
+            known_message_ids = set(self._loaded_messages_cache[chat_id].keys())
+
+            for msg in all_messages:
+                if not self._message_belongs_to_chat(msg, chat_id, is_group):
+                    continue
+
+                processed_msg = self._process_message_for_chat(msg)
+                if not processed_msg or processed_msg['timestamp'] <= last_timestamp:
+                    continue
+
+                msg_id = processed_msg.get('message_id', f"temp_{processed_msg['timestamp']}")
+
+                # Verificar se é realmente uma mensagem nova
+                if msg_id not in known_message_ids:
+                    new_messages.append(processed_msg)
+
+            if not new_messages:
+                return []
+
+            # Ordenar novas mensagens
+            new_messages.sort(key=lambda x: (x['timestamp'], x.get('message_id', '')))
+
+            # Atualizar cache com novas mensagens
+            for msg in new_messages:
+                msg_id = msg.get('message_id', f"temp_{msg['timestamp']}")
+                self._loaded_messages_cache[chat_id][msg_id] = msg
+
+            # Atualizar timestamp
+            if new_messages:
+                self._last_message_timestamps[chat_id] = max(msg['timestamp'] for msg in new_messages)
+
+            print(f"✅ {len(new_messages)} NOVAS mensagens encontradas")
+            return new_messages
+
+        except Exception as e:
+            print(f"❌ Erro na busca incremental: {e}")
+            return []
+
+    def get_messages_before_pagination(self, chat_id: str, before_timestamp: float, limit: int = 20) -> List[Dict]:
+        """
+        NOVO: Carrega mensagens antigas para paginação (scroll para cima)
+        """
+        if not self.is_connected():
+            return []
+
+        try:
+            print(f"📜 Paginação: {limit} mensagens antes de {before_timestamp}")
+
+            # Usar cache se disponível, senão buscar do banco
+            if chat_id in self._loaded_messages_cache:
+                all_chat_messages = list(self._loaded_messages_cache[chat_id].values())
             else:
-                # Buscar do banco
-                all_messages = self.db_manager.get_recent_messages(5000)  # Buscar mais para paginação
-                is_group = False
-                for msg in all_messages[:100]:
-                    if msg.get('chat', {}).get('id', '') == chat_id and msg.get('isGroup', False):
-                        is_group = True
-                        break
-
-                all_chat_messages = []
-                for msg in all_messages:
-                    if self._message_belongs_to_chat(msg, chat_id, is_group):
-                        processed_msg = self._process_message_for_chat(msg)
-                        if processed_msg and processed_msg['timestamp'] > 0:
-                            all_chat_messages.append(processed_msg)
-
-                # Ordenar e cachear
-                all_chat_messages.sort(key=lambda x: (x['timestamp'], x.get('message_id', '')))
-                self._message_cache[chat_id] = all_chat_messages
+                # Buscar do banco se cache não disponível
+                all_messages = self.db_manager.get_recent_messages(5000)
+                is_group = self._detect_if_group(chat_id, all_messages)
+                all_chat_messages = self._filter_and_process_messages(chat_id, all_messages, is_group)
 
             # Filtrar mensagens antes do timestamp
             older_messages = [
@@ -298,50 +341,116 @@ class ChatDatabaseInterface:
                 if msg['timestamp'] < before_timestamp
             ]
 
-            # Retornar as mais recentes das antigas (últimas N antes do timestamp)
+            # Ordenar e pegar as mais recentes das antigas
+            older_messages.sort(key=lambda x: (x['timestamp'], x.get('message_id', '')))
+
             if len(older_messages) <= limit:
                 result = older_messages
             else:
                 result = older_messages[-limit:]
 
-            print(f"✅ {len(result)} mensagens antigas carregadas")
+            print(f"✅ Paginação: {len(result)} mensagens antigas")
             return result
 
         except Exception as e:
-            print(f"❌ Erro ao buscar mensagens antigas: {e}")
+            print(f"❌ Erro na paginação: {e}")
             return []
 
-    def process_single_message(self, message_data: Dict) -> Optional[Dict]:
+    def _detect_if_group(self, chat_id: str, messages: List[Dict]) -> bool:
+        """Detecta se o chat é um grupo"""
+        for msg in messages[:100]:  # Verificar primeiras 100 mensagens
+            if msg.get('chat', {}).get('id', '') == chat_id and msg.get('isGroup', False):
+                return True
+        return False
+
+    def _filter_and_process_messages(self, chat_id: str, all_messages: List[Dict], is_group: bool) -> List[Dict]:
+        """Filtra e processa mensagens de um chat específico"""
+        chat_messages = []
+
+        for msg in all_messages:
+            if self._message_belongs_to_chat(msg, chat_id, is_group):
+                processed_msg = self._process_message_for_chat(msg)
+                if processed_msg and processed_msg['timestamp'] > 0:
+                    chat_messages.append(processed_msg)
+
+        return chat_messages
+
+    def _remove_duplicates(self, messages: List[Dict]) -> List[Dict]:
+        """Remove mensagens duplicadas baseado no message_id"""
+        seen_ids = set()
+        unique_messages = []
+
+        for msg in messages:
+            msg_id = msg.get('message_id', '')
+            if msg_id and msg_id not in seen_ids:
+                seen_ids.add(msg_id)
+                unique_messages.append(msg)
+            elif not msg_id:
+                # Mensagens sem ID são adicionadas (podem ser temporárias)
+                unique_messages.append(msg)
+
+        return unique_messages
+
+    def process_single_new_message(self, message_data: Dict) -> Optional[Dict]:
         """
-        NOVO: Processa uma única mensagem nova (para WebSocket)
+        NOVO: Processa uma única mensagem nova (para WebSocket/tempo real)
+        Adiciona automaticamente ao cache se for de um chat monitorado
         """
         try:
             print(f"📨 Processando mensagem única: {message_data.get('messageId', 'N/A')}")
 
             # Processar mensagem
             processed_msg = self._process_message_for_chat(message_data)
+            if not processed_msg:
+                return None
 
-            if processed_msg:
-                # Adicionar ao cache se existir
-                chat_id = self._extract_chat_id_from_message(message_data)
-                if chat_id and chat_id in self._message_cache:
-                    # Verificar se não é duplicata
-                    msg_id = processed_msg.get('message_id', '')
-                    if msg_id:
-                        existing_ids = {msg.get('message_id', '') for msg in self._message_cache[chat_id]}
-                        if msg_id not in existing_ids:
-                            # Adicionar ao cache (manter ordenação)
-                            self._message_cache[chat_id].append(processed_msg)
-                            self._message_cache[chat_id].sort(key=lambda x: (x['timestamp'], x.get('message_id', '')))
+            # Identificar chat
+            chat_id = self._extract_chat_id_from_message(message_data)
+            if not chat_id:
+                return None
 
-                print(f"✅ Mensagem única processada: {processed_msg.get('content', '')[:50]}")
-                return processed_msg
+            # Se temos cache para este chat, adicionar mensagem
+            if chat_id in self._loaded_messages_cache:
+                msg_id = processed_msg.get('message_id', f"temp_{processed_msg['timestamp']}")
 
-            return None
+                # Verificar se não é duplicata
+                if msg_id not in self._loaded_messages_cache[chat_id]:
+                    # Adicionar ao cache
+                    self._loaded_messages_cache[chat_id][msg_id] = processed_msg
+
+                    # Atualizar timestamp
+                    current_max = self._last_message_timestamps.get(chat_id, 0)
+                    if processed_msg['timestamp'] > current_max:
+                        self._last_message_timestamps[chat_id] = processed_msg['timestamp']
+
+            print(f"✅ Mensagem única processada: {processed_msg.get('content', '')[:50]}")
+            return processed_msg
 
         except Exception as e:
             print(f"⚠️ Erro ao processar mensagem única: {e}")
             return None
+
+    def clear_chat_cache(self, chat_id: str = None):
+        """Limpa cache de mensagens (específico ou geral)"""
+        if chat_id:
+            if chat_id in self._loaded_messages_cache:
+                del self._loaded_messages_cache[chat_id]
+                del self._last_message_timestamps[chat_id]
+                print(f"🗑️ Cache limpo para: {chat_id}")
+        else:
+            self._loaded_messages_cache.clear()
+            self._last_message_timestamps.clear()
+            print("🗑️ Cache de mensagens totalmente limpo")
+
+    def get_cache_stats(self) -> Dict:
+        """Retorna estatísticas do cache"""
+        return {
+            'chats_cached': len(self._loaded_messages_cache),
+            'total_messages_cached': sum(len(cache) for cache in self._loaded_messages_cache.values()),
+            'contacts_cached': len(self._contacts_cache)
+        }
+
+    # ========== MÉTODOS AUXILIARES (sem mudanças) ==========
 
     def _extract_chat_id_from_message(self, msg: Dict) -> str:
         """Extrai chat_id de uma mensagem"""
@@ -607,16 +716,6 @@ class ChatDatabaseInterface:
         print("🔄 Atualizando cache de contatos...")
         self._build_contacts_cache()
 
-    def clear_message_cache(self, chat_id: str = None):
-        """Limpa cache de mensagens (específico ou geral)"""
-        if chat_id:
-            if chat_id in self._message_cache:
-                del self._message_cache[chat_id]
-                print(f"🗑️ Cache de mensagens limpo para: {chat_id}")
-        else:
-            self._message_cache.clear()
-            print("🗑️ Cache de mensagens totalmente limpo")
-
     # Compatibilidade com interface antiga
     def get_contacts_list(self, limit: int = 50) -> List[Dict]:
         """Wrapper para compatibilidade"""
@@ -638,3 +737,11 @@ class ChatDatabaseInterface:
             })
 
         return contacts
+
+    # NOVOS MÉTODOS PARA COMPATIBILIDADE
+    def get_chat_messages(self, chat_id: str, limit: int = 50) -> List[Dict]:
+        """
+        Método de compatibilidade - usa carregamento inicial
+        Para manter compatibilidade com código existente
+        """
+        return self.get_chat_messages_initial(chat_id, limit)
