@@ -412,28 +412,30 @@ class MessageBubble(QFrame):
 
         menu = QMenu(self)
         menu.setStyleSheet("""
-            QMenu {
-                background-color: white;
-                border: 1px solid #e0e0e0;
-                border-radius: 8px;
-                padding: 5px;
-            }
-            QMenu::item {
-                padding: 5px 15px;
-                border-radius: 4px;
-            }
-            QMenu::item:selected {
-                background-color: #f0f0f0;
-            }
-        """)
+           QMenu {
+               background-color: white;
+               border: 1px solid #e0e0e0;
+               border-radius: 8px;
+               padding: 5px;
+           }
+           QMenu::item {
+               padding: 8px 15px;
+               border-radius: 4px;
+               color: #2c3e50;
+               font-size: 13px;
+           }
+           QMenu::item:selected {
+               background-color: #f8f9fa;
+           }
+       """)
 
         # Opções do menu
         if self.is_from_me:
-            edit_action = QAction("✏️ Editar", self)
+            edit_action = QAction("Editar mensagem", self)
             edit_action.triggered.connect(self.edit_message)
             menu.addAction(edit_action)
 
-            delete_action = QAction("🗑️ Apagar", self)
+            delete_action = QAction("Deletar mensagem", self)
             delete_action.triggered.connect(self.delete_message)
             menu.addAction(delete_action)
 
@@ -450,7 +452,7 @@ class MessageBubble(QFrame):
             reactions_menu.addAction(action)
 
         # Opção para remover reação
-        remove_reaction = QAction("❌ Remover reação", self)
+        remove_reaction = QAction("Remover reação", self)
         remove_reaction.triggered.connect(lambda: self.add_reaction(None))
         reactions_menu.addAction(remove_reaction)
 
@@ -469,15 +471,49 @@ class MessageBubble(QFrame):
         from PyQt6.QtWidgets import QDialog, QVBoxLayout, QHBoxLayout, QLineEdit, QPushButton, QLabel, QTextEdit
 
         dialog = QDialog(self)
-        dialog.setWindowTitle("✏️ Editar Mensagem")
+        dialog.setWindowTitle("Editar Mensagem")
         dialog.setFixedWidth(400)
+        dialog.setStyleSheet("""
+           QDialog {
+               background-color: white;
+           }
+           QLabel {
+               color: #2c3e50;
+               font-size: 12px;
+               margin-bottom: 5px;
+           }
+           QTextEdit {
+               border: 1px solid #ddd;
+               border-radius: 6px;
+               padding: 8px;
+               font-size: 13px;
+           }
+           QPushButton {
+               padding: 8px 20px;
+               border-radius: 6px;
+               font-size: 13px;
+               border: none;
+           }
+           QPushButton#cancelButton {
+               background-color: #f8f9fa;
+               color: #6c757d;
+               border: 1px solid #dee2e6;
+           }
+           QPushButton#cancelButton:hover {
+               background-color: #e9ecef;
+           }
+           QPushButton#saveButton {
+               background-color: #28a745;
+               color: white;
+           }
+           QPushButton#saveButton:hover {
+               background-color: #218838;
+           }
+       """)
 
         layout = QVBoxLayout(dialog)
-
-        # Mostrar ID para debug
-        id_label = QLabel(f"ID: {self.webhook_message_id[:30]}...")
-        id_label.setStyleSheet("color: #666; font-size: 9px;")
-        layout.addWidget(id_label)
+        layout.setSpacing(15)
+        layout.setContentsMargins(20, 20, 20, 20)
 
         # Campo de edição
         current_text = self.message_data.get('content', '')
@@ -492,16 +528,17 @@ class MessageBubble(QFrame):
         button_layout = QHBoxLayout()
 
         cancel_btn = QPushButton("Cancelar")
+        cancel_btn.setObjectName("cancelButton")
         cancel_btn.clicked.connect(dialog.reject)
 
         save_btn = QPushButton("Salvar")
+        save_btn.setObjectName("saveButton")
         save_btn.clicked.connect(dialog.accept)
-        save_btn.setStyleSheet("background-color: #27ae60; color: white;")
 
         button_layout.addWidget(cancel_btn)
         button_layout.addWidget(save_btn)
 
-        layout.addWidget(QLabel("Editar mensagem:"))
+        layout.addWidget(QLabel("Editar o texto da mensagem:"))
         layout.addWidget(edit_field)
         layout.addLayout(button_layout)
 
@@ -515,7 +552,7 @@ class MessageBubble(QFrame):
 
                     result = self.whatsapp_api.editar_mensagem(
                         phone=phone_number,
-                        message_id=self.webhook_message_id,  # ID correto do webhook
+                        message_id=self.webhook_message_id,
                         new_text=new_text
                     )
 
@@ -541,14 +578,54 @@ class MessageBubble(QFrame):
             return
 
         from PyQt6.QtWidgets import QMessageBox
-        reply = QMessageBox.question(
-            self,
-            "Confirmação",
-            f"Tem certeza que deseja apagar esta mensagem?\n\nID: {self.webhook_message_id[:20]}...",
-            QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No
-        )
 
-        if reply == QMessageBox.StandardButton.Yes:
+        # Dialog de confirmação mais limpo
+        msg_box = QMessageBox(self)
+        msg_box.setWindowTitle("Deletar Mensagem")
+        msg_box.setText("Deseja deletar esta mensagem?")
+        msg_box.setInformativeText("Esta ação não pode ser desfeita.")
+        msg_box.setStandardButtons(QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No)
+        msg_box.setDefaultButton(QMessageBox.StandardButton.No)
+
+        # Personalizar botões
+        yes_button = msg_box.button(QMessageBox.StandardButton.Yes)
+        yes_button.setText("Deletar")
+        no_button = msg_box.button(QMessageBox.StandardButton.No)
+        no_button.setText("Cancelar")
+
+        msg_box.setStyleSheet("""
+           QMessageBox {
+               background-color: white;
+           }
+           QMessageBox QLabel {
+               color: #2c3e50;
+               font-size: 13px;
+           }
+           QPushButton {
+               padding: 8px 20px;
+               border-radius: 6px;
+               font-size: 12px;
+               border: none;
+               min-width: 80px;
+           }
+           QPushButton[text="Deletar"] {
+               background-color: #dc3545;
+               color: white;
+           }
+           QPushButton[text="Deletar"]:hover {
+               background-color: #c82333;
+           }
+           QPushButton[text="Cancelar"] {
+               background-color: #f8f9fa;
+               color: #6c757d;
+               border: 1px solid #dee2e6;
+           }
+           QPushButton[text="Cancelar"]:hover {
+               background-color: #e9ecef;
+           }
+       """)
+
+        if msg_box.exec() == QMessageBox.StandardButton.Yes:
             try:
                 print(f"🗑️ Tentando deletar mensagem:")
                 print(f"   Webhook ID: {self.webhook_message_id}")
@@ -564,7 +641,7 @@ class MessageBubble(QFrame):
                 # Fazer a chamada para a API com o ID correto do webhook
                 result = self.whatsapp_api.deleta_mensagem(
                     phone_number=phone_number,
-                    message_ids=[self.webhook_message_id]  # Lista com o ID correto
+                    message_ids=[self.webhook_message_id]
                 )
 
                 print(f"📋 Resultado da API: {result}")
@@ -583,7 +660,23 @@ class MessageBubble(QFrame):
                         # Marcar como deletada
                         self.message_data['deleted'] = True
 
-                        QMessageBox.information(self, "Sucesso", "Mensagem deletada com sucesso!")
+                        # Feedback de sucesso mais discreto
+                        success_msg = QMessageBox(self)
+                        success_msg.setWindowTitle("Sucesso")
+                        success_msg.setText("Mensagem deletada com sucesso")
+                        success_msg.setIcon(QMessageBox.Icon.Information)
+                        success_msg.setStandardButtons(QMessageBox.StandardButton.Ok)
+                        success_msg.button(QMessageBox.StandardButton.Ok).setText("OK")
+                        success_msg.setStyleSheet("""
+                           QMessageBox {
+                               background-color: white;
+                           }
+                           QMessageBox QLabel {
+                               color: #28a745;
+                               font-size: 13px;
+                           }
+                       """)
+                        success_msg.exec()
                     else:
                         error_msg = result.get('error', 'Resposta inesperada da API')
                         QMessageBox.warning(self, "Erro", f"Falha ao deletar: {error_msg}")
