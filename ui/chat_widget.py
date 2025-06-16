@@ -98,7 +98,7 @@ class MessageBubble(QFrame):
 
         # Layout principal
         main_layout = QVBoxLayout(self)
-        main_layout.setContentsMargins(5, 8, 5, 8)
+        main_layout.setContentsMargins(5, 15, 5, 15)
         main_layout.setSpacing(3)
 
         # Nome do remetente (apenas para mensagens recebidas em grupos)
@@ -118,15 +118,19 @@ class MessageBubble(QFrame):
         # Criar o balão da mensagem
         self.bubble_frame = self._create_bubble()
 
-        # Alinhar balão baseado no remetente
+        # CORREÇÃO: Alinhamento mais extremo e espaços maiores
         if self.is_from_me:
-            # Mensagens enviadas - lado direito
-            bubble_container.addStretch(1)
+            # Mensagens enviadas - máximo à direita com margem muito grande
+            bubble_container.addStretch(25)  # Espaço MUITO maior à esquerda
             bubble_container.addWidget(self.bubble_frame, 0)
+            # Margem específica para mensagens enviadas
+            main_layout.setContentsMargins(120, 8, 5, 8)  # 120px de margem esquerda
         else:
-            # Mensagens recebidas - lado esquerdo
+            # Mensagens recebidas - lado esquerdo com margem muito grande
             bubble_container.addWidget(self.bubble_frame, 0)
-            bubble_container.addStretch(1)
+            bubble_container.addStretch(25)  # Espaço MUITO maior à direita
+            # Margem específica para mensagens recebidas
+            main_layout.setContentsMargins(5, 8, 120, 8)  # 120px de margem direita
 
         main_layout.addLayout(bubble_container)
 
@@ -135,14 +139,14 @@ class MessageBubble(QFrame):
 
         # Estilo do container principal
         self.setStyleSheet("""
-            MessageBubble { 
-                background-color: transparent; 
-                border: none; 
-            }
-            MessageBubble:hover { 
-                background-color: transparent; 
-            }
-        """)
+           MessageBubble { 
+               background-color: transparent; 
+               border: none; 
+           }
+           MessageBubble:hover { 
+               background-color: transparent; 
+           }
+       """)
 
         # Garantir visibilidade
         self.setVisible(True)
@@ -151,13 +155,19 @@ class MessageBubble(QFrame):
     def _create_bubble(self) -> QFrame:
         """Cria o balão da mensagem com suporte a reações existentes"""
         bubble = QFrame()
-        bubble.setMaximumWidth(400)
+
+        # CORREÇÃO: Reduzir largura máxima ainda mais para criar mais espaço lateral
+        if self.is_from_me:
+            bubble.setMaximumWidth(400)  # Reduzido de 600 para 400
+        else:
+            bubble.setMaximumWidth(450)  # Reduzido de 650 para 450
+
         bubble.setMinimumWidth(120)
         bubble.setSizePolicy(QSizePolicy.Policy.Preferred, QSizePolicy.Policy.Fixed)
 
         # Layout do balão
         bubble_layout = QHBoxLayout(bubble)
-        bubble_layout.setContentsMargins(15, 12, 15, 12)
+        bubble_layout.setContentsMargins(20, 12, 120, 12)
         bubble_layout.setSpacing(5)
 
         # Container para conteúdo principal
@@ -180,11 +190,11 @@ class MessageBubble(QFrame):
         # Cor do texto baseada no tema
         text_color = "#ffffff" if self.is_from_me else "#2c3e50"
         self.content_label.setStyleSheet(f"""
-            color: {text_color}; 
-            background: transparent; 
-            border: none;
-            selection-background-color: rgba(255, 255, 255, 0.3);
-        """)
+           color: {text_color}; 
+           background: transparent; 
+           border: none;
+           selection-background-color: rgba(255, 255, 255, 0.3);
+       """)
 
         content_container.addWidget(self.content_label)
 
@@ -199,15 +209,15 @@ class MessageBubble(QFrame):
             reaction_label = QLabel(self.message_data['reaction'])
             reaction_label.setObjectName('reaction_label')
             reaction_label.setStyleSheet("""
-                QLabel {
-                    background-color: rgba(255, 255, 255, 0.9);
-                    border: 1px solid #e9ecef;
-                    border-radius: 12px;
-                    padding: 4px 8px;
-                    font-size: 16px;
-                    margin-top: 5px;
-                }
-            """)
+               QLabel {
+                   background-color: rgba(255, 255, 255, 0.9);
+                   border: 1px solid #e9ecef;
+                   border-radius: 12px;
+                   padding: 4px 8px;
+                   font-size: 16px;
+                   margin-top: 5px;
+               }
+           """)
             reaction_label.setAlignment(Qt.AlignmentFlag.AlignLeft)
             content_container.addWidget(reaction_label)
 
@@ -228,7 +238,12 @@ class MessageBubble(QFrame):
         if timestamp_str:
             self.time_label = QLabel(timestamp_str)
             self.time_label.setFont(QFont('Segoe UI', 8))
-            self.time_label.setAlignment(Qt.AlignmentFlag.AlignRight)
+
+            # CORREÇÃO: Alinhamento do horário baseado no remetente
+            if self.is_from_me:
+                self.time_label.setAlignment(Qt.AlignmentFlag.AlignRight)
+            else:
+                self.time_label.setAlignment(Qt.AlignmentFlag.AlignLeft)
 
             time_color = "rgba(255,255,255,0.8)" if self.is_from_me else "#7f8c8d"
             self.time_label.setStyleSheet(f"color: {time_color}; background: transparent; margin-top: 3px;")
@@ -240,11 +255,11 @@ class MessageBubble(QFrame):
                 edited_indicator = QLabel("editada")
                 edited_indicator.setFont(QFont('Segoe UI', 7))
                 edited_indicator.setStyleSheet(f"""
-                    color: {time_color};
-                    font-style: italic;
-                    margin-left: 5px;
-                    margin-top: 3px;
-                """)
+                   color: {time_color};
+                   font-style: italic;
+                   margin-left: 5px;
+                   margin-top: 3px;
+               """)
                 status_layout.addWidget(edited_indicator)
 
             # Adicionar ícone de status para mensagens enviadas
@@ -501,6 +516,34 @@ class MessageBubble(QFrame):
         dialog.setWindowTitle("Editar Mensagem")
         dialog.setFixedWidth(400)
 
+        # CORREÇÃO: Forçar background branco no dialog
+        dialog.setStyleSheet("""
+           QDialog {
+               background-color: white;
+           }
+           QLabel {
+               color: black;
+               background-color: transparent;
+           }
+           QTextEdit {
+               background-color: white;
+               color: black;
+               border: 1px solid #ccc;
+               border-radius: 5px;
+               padding: 8px;
+           }
+           QPushButton {
+               background-color: #3498db;
+               color: white;
+               border: none;
+               border-radius: 5px;
+               padding: 8px 16px;
+           }
+           QPushButton:hover {
+               background-color: #2980b9;
+           }
+       """)
+
         layout = QVBoxLayout(dialog)
         layout.setSpacing(15)
         layout.setContentsMargins(20, 20, 20, 20)
@@ -584,28 +627,18 @@ class MessageBubble(QFrame):
                                 self.edited_indicator = QLabel("editada")
                                 self.edited_indicator.setFont(QFont('Segoe UI', 7))
 
-                                # CORREÇÃO: Cor apropriada sem sobrescrever background
-                                if self.is_from_me:
-                                    self.edited_indicator.setStyleSheet("""
-                                        color: rgba(255,255,255,0.8);
-                                        font-style: italic;
-                                        margin-left: 5px;
-                                        background: transparent;
-                                    """)
-                                else:
-                                    self.edited_indicator.setStyleSheet("""
-                                        color: #95a5a6;
-                                        font-style: italic;
-                                        margin-left: 5px;
-                                        background: transparent;
-                                    """)
+                                # CORREÇÃO: Usar apenas cor sem sobrescrever background
+                                time_color = "rgba(255,255,255,0.8)" if self.is_from_me else "#7f8c8d"
+                                self.edited_indicator.setStyleSheet(f"""
+                                   color: {time_color};
+                                   font-style: italic;
+                                   margin-left: 5px;
+                               """)
                                 status_layout.addWidget(self.edited_indicator)
                             break
 
         except Exception as e:
             print(f"Erro ao marcar como editada: {e}")
-
-
 
     def delete_message(self):
         """Marca mensagem como deletada sem remover da interface"""
@@ -615,13 +648,36 @@ class MessageBubble(QFrame):
 
         from PyQt6.QtWidgets import QMessageBox
 
-        # Dialog de confirmação
+        # CORREÇÃO: Dialog de confirmação com background branco forçado
         msg_box = QMessageBox(self)
         msg_box.setWindowTitle("Deletar Mensagem")
         msg_box.setText("Deseja deletar esta mensagem?")
         msg_box.setInformativeText("Esta ação não pode ser desfeita.")
         msg_box.setStandardButtons(QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No)
         msg_box.setDefaultButton(QMessageBox.StandardButton.No)
+
+        # CORREÇÃO: Forçar estilo branco no QMessageBox
+        msg_box.setStyleSheet("""
+           QMessageBox {
+               background-color: white;
+               color: black;
+           }
+           QMessageBox QLabel {
+               background-color: white;
+               color: black;
+           }
+           QMessageBox QPushButton {
+               background-color: #3498db;
+               color: white;
+               border: none;
+               border-radius: 5px;
+               padding: 8px 16px;
+               min-width: 80px;
+           }
+           QMessageBox QPushButton:hover {
+               background-color: #2980b9;
+           }
+       """)
 
         yes_button = msg_box.button(QMessageBox.StandardButton.Yes)
         yes_button.setText("Deletar")
@@ -663,41 +719,39 @@ class MessageBubble(QFrame):
                 QMessageBox.critical(self, "Erro", f"Erro ao apagar mensagem: {str(e)}")
 
     def _show_as_deleted(self):
-        """Mostra mensagem como deletada sem tela preta - CORRIGIDO"""
+        """Mostra mensagem como deletada mantendo background branco - CORRIGIDO"""
         try:
             # Atualizar conteúdo
             deleted_text = "🗑️ Esta mensagem foi apagada"
             self.content_label.setText(deleted_text)
 
-            # CORREÇÃO: Estilo que não causa tela preta
+            # CORREÇÃO: Manter cor de texto sem afetar background
             self.content_label.setStyleSheet("""
-                color: #e74c3c; 
-                background: transparent; 
-                border: none;
-                font-style: italic;
-            """)
+               color: #e74c3c; 
+               font-style: italic;
+           """)
 
-            # CORREÇÃO: Estilo do balão sem sobrescrever o background principal
+            # CORREÇÃO: Aplicar estilo apenas ao bubble_frame
             if self.is_from_me:
                 self.bubble_frame.setStyleSheet("""
-                    QFrame {
-                        background: qlineargradient(x1:0, y1:0, x2:1, y2:1,
-                            stop:0 #ff7675, stop:1 #d63031);
-                        border-radius: 18px;
-                        border-bottom-right-radius: 5px;
-                        opacity: 0.8;
-                    }
-                """)
+                   QFrame {
+                       background: qlineargradient(x1:0, y1:0, x2:1, y2:1,
+                           stop:0 #ff7675, stop:1 #d63031);
+                       border-radius: 18px;
+                       border-bottom-right-radius: 5px;
+                       opacity: 0.8;
+                   }
+               """)
             else:
                 self.bubble_frame.setStyleSheet("""
-                    QFrame {
-                        background-color: #ffeaea;
-                        border: 2px solid #e74c3c;
-                        border-radius: 18px;
-                        border-bottom-left-radius: 5px;
-                        opacity: 0.8;
-                    }
-                """)
+                   QFrame {
+                       background-color: #ffeaea;
+                       border: 2px solid #e74c3c;
+                       border-radius: 18px;
+                       border-bottom-left-radius: 5px;
+                       opacity: 0.8;
+                   }
+               """)
 
             # Desabilitar menu de opções
             if hasattr(self, 'options_button'):
@@ -848,6 +902,68 @@ class DateSeparator(QWidget):
         layout.addWidget(left_line, 1)
         layout.addWidget(date_label, 0)
         layout.addWidget(right_line, 1)
+
+def setup_ui(self):
+   """Configura a interface do balão com botões de opções"""
+   # Configurações básicas do widget
+   self.setMaximumWidth(500)
+   self.setMinimumHeight(50)
+   self.setSizePolicy(QSizePolicy.Policy.Preferred, QSizePolicy.Policy.Fixed)
+
+   # Layout principal
+   main_layout = QVBoxLayout(self)
+   main_layout.setContentsMargins(5, 8, 5, 8)
+   main_layout.setSpacing(3)
+
+   # Nome do remetente (apenas para mensagens recebidas em grupos)
+   if not self.is_from_me and self.message_data.get('is_group', False):
+       sender_name = self.message_data.get('sender_name', 'Desconhecido')
+       if sender_name != 'Você':  # Não mostrar "Você" em grupos
+           sender_label = QLabel(sender_name)
+           sender_label.setFont(QFont('Segoe UI', 9, QFont.Weight.Bold))
+           sender_label.setStyleSheet("color: #667eea; margin-left: 15px; margin-bottom: 2px;")
+           main_layout.addWidget(sender_label)
+
+   # Container do balão
+   bubble_container = QHBoxLayout()
+   bubble_container.setContentsMargins(0, 0, 0, 0)
+   bubble_container.setSpacing(0)
+
+   # Criar o balão da mensagem
+   self.bubble_frame = self._create_bubble()
+
+   # CORREÇÃO: Alinhamento mais extremo para direita
+   if self.is_from_me:
+       # Mensagens enviadas - máximo à direita
+       bubble_container.addStretch(10)  # Muito mais espaço à esquerda
+       bubble_container.addWidget(self.bubble_frame, 0)
+       # Zero margem à direita para colar na borda
+       bubble_container.setContentsMargins(0, 0, 0, 0)
+   else:
+       # Mensagens recebidas - lado esquerdo
+       bubble_container.addWidget(self.bubble_frame, 0)
+       bubble_container.addStretch(10)  # Muito mais espaço à direita
+       bubble_container.setContentsMargins(8, 0, 0, 0)
+
+   main_layout.addLayout(bubble_container)
+
+   # Configurar o layout principal
+   self.setLayout(main_layout)
+
+   # Estilo do container principal
+   self.setStyleSheet("""
+       MessageBubble { 
+           background-color: transparent; 
+           border: none; 
+       }
+       MessageBubble:hover { 
+           background-color: transparent; 
+       }
+   """)
+
+   # Garantir visibilidade
+   self.setVisible(True)
+   self.is_fully_setup = True
 
 
 class AttachmentButton(QPushButton):

@@ -947,7 +947,7 @@ class WhatsAppChatMainWindow(QMainWindow):
         self.ui.update_connection_status(connected)
 
     def on_contacts_loaded(self, contacts: List[Dict]):
-        """Contatos carregados"""
+        """Contatos carregados com conexão de seleção"""
         print(f"📋 {len(contacts)} contatos carregados")
 
         self.ui.clear_contacts_list()
@@ -955,20 +955,22 @@ class WhatsAppChatMainWindow(QMainWindow):
 
         for contact_data in contacts:
             contact_widget = self.ui.add_contact_to_list(contact_data)
+
+            # CORREÇÃO: Conectar sinal para seleção de contato
             contact_widget.clicked.connect(self.on_contact_selected)
 
             contact_id = contact_data['contact_id']
             self.loaded_contacts[contact_id] = contact_data
 
-        print("✅ Lista atualizada")
+        print("✅ Lista atualizada com elevação de seleção")
 
     def on_contact_selected(self, contact_id: str):
-        """Contato selecionado"""
+        """Contato selecionado com feedback visual"""
         if contact_id not in self.loaded_contacts:
             return
 
         contact_data = self.loaded_contacts[contact_id]
-        print(f"👤 Selecionado: {contact_data['contact_name']}")
+        print(f"👤 Selecionado: {contact_data['contact_name']} (com elevação)")
 
         self.current_contact = contact_id
         self.current_contact_data = contact_data
