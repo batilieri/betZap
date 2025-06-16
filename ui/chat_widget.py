@@ -559,7 +559,7 @@ class MessageBubble(QFrame):
                     QMessageBox.critical(self, "Erro", f"Erro ao editar mensagem: {str(e)}")
 
     def _show_as_edited(self, new_text: str):
-        """Mostra mensagem como editada com marcação visual"""
+        """Mostra mensagem como editada com marcação visual - CORRIGIDO"""
         try:
             # Atualizar texto com marcação de editada
             message_type = self.message_data.get('message_type', 'text')
@@ -583,15 +583,22 @@ class MessageBubble(QFrame):
                             if not hasattr(self, 'edited_indicator'):
                                 self.edited_indicator = QLabel("editada")
                                 self.edited_indicator.setFont(QFont('Segoe UI', 7))
-                                self.edited_indicator.setStyleSheet("""
-                                    color: rgba(255,255,255,0.6);
-                                    font-style: italic;
-                                    margin-left: 5px;
-                                """ if self.is_from_me else """
-                                    color: #95a5a6;
-                                    font-style: italic;
-                                    margin-left: 5px;
-                                """)
+
+                                # CORREÇÃO: Cor apropriada sem sobrescrever background
+                                if self.is_from_me:
+                                    self.edited_indicator.setStyleSheet("""
+                                        color: rgba(255,255,255,0.8);
+                                        font-style: italic;
+                                        margin-left: 5px;
+                                        background: transparent;
+                                    """)
+                                else:
+                                    self.edited_indicator.setStyleSheet("""
+                                        color: #95a5a6;
+                                        font-style: italic;
+                                        margin-left: 5px;
+                                        background: transparent;
+                                    """)
                                 status_layout.addWidget(self.edited_indicator)
                             break
 
@@ -656,28 +663,41 @@ class MessageBubble(QFrame):
                 QMessageBox.critical(self, "Erro", f"Erro ao apagar mensagem: {str(e)}")
 
     def _show_as_deleted(self):
-        """Mostra mensagem como deletada (em vermelho) sem remover"""
+        """Mostra mensagem como deletada sem tela preta - CORRIGIDO"""
         try:
             # Atualizar conteúdo
             deleted_text = "🗑️ Esta mensagem foi apagada"
             self.content_label.setText(deleted_text)
+
+            # CORREÇÃO: Estilo que não causa tela preta
             self.content_label.setStyleSheet("""
                 color: #e74c3c; 
                 background: transparent; 
                 border: none;
                 font-style: italic;
-                text-decoration: line-through;
             """)
 
-            # Estilo do balão deletado
-            self.bubble_frame.setStyleSheet("""
-                QFrame {
-                    background-color: #ffeaea;
-                    border: 2px solid #e74c3c;
-                    border-radius: 18px;
-                    opacity: 0.7;
-                }
-            """)
+            # CORREÇÃO: Estilo do balão sem sobrescrever o background principal
+            if self.is_from_me:
+                self.bubble_frame.setStyleSheet("""
+                    QFrame {
+                        background: qlineargradient(x1:0, y1:0, x2:1, y2:1,
+                            stop:0 #ff7675, stop:1 #d63031);
+                        border-radius: 18px;
+                        border-bottom-right-radius: 5px;
+                        opacity: 0.8;
+                    }
+                """)
+            else:
+                self.bubble_frame.setStyleSheet("""
+                    QFrame {
+                        background-color: #ffeaea;
+                        border: 2px solid #e74c3c;
+                        border-radius: 18px;
+                        border-bottom-left-radius: 5px;
+                        opacity: 0.8;
+                    }
+                """)
 
             # Desabilitar menu de opções
             if hasattr(self, 'options_button'):
