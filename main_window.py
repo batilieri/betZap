@@ -617,7 +617,7 @@ class WhatsAppChatMainWindow(QMainWindow):
         whatsapp_shortcut.activated.connect(self.show_whatsapp_config)
 
     def send_whatsapp_text_message(self):
-        """Envia mensagem via WhatsApp"""
+        """Envia mensagem via WhatsApp - CORRIGIDO"""
         if not self.current_contact:
             QMessageBox.warning(self, "Aviso", "Selecione um contato primeiro")
             return
@@ -629,9 +629,9 @@ class WhatsAppChatMainWindow(QMainWindow):
         # Limpar input
         self.ui.message_input.clear()
 
-        # Desabilitar botão
+        # CORREÇÃO: Desabilitar botão temporariamente SEM alterar ícone
         self.ui.send_btn.setEnabled(False)
-        self.ui.send_btn.setText("📤...")
+        # Manter ícone original: ➤
 
         # Enviar
         try:
@@ -643,11 +643,12 @@ class WhatsAppChatMainWindow(QMainWindow):
 
         except Exception as e:
             QMessageBox.critical(self, "Erro", f"Erro ao enviar: {str(e)}")
+            # Restaurar estado em caso de erro
             self.ui.send_btn.setEnabled(True)
-            self.ui.send_btn.setText("📤")
+            self.ui.send_btn.setText("➤")
 
     def send_whatsapp_file(self):
-        """Envia arquivo via WhatsApp"""
+        """Envia arquivo via WhatsApp - CORRIGIDO"""
         if not self.current_contact:
             QMessageBox.warning(self, "Aviso", "Selecione um contato primeiro")
             return
@@ -686,9 +687,9 @@ class WhatsAppChatMainWindow(QMainWindow):
             if not ok:
                 return
 
-        # Desabilitar botão
+        # CORREÇÃO: Desabilitar botão temporariamente SEM alterar ícone
         self.ui.attach_btn.setEnabled(False)
-        self.ui.attach_btn.setText("📤...")
+        # Manter ícone original: 📎
 
         # Enviar
         try:
@@ -703,18 +704,19 @@ class WhatsAppChatMainWindow(QMainWindow):
 
         except Exception as e:
             QMessageBox.critical(self, "Erro", f"Erro ao enviar arquivo: {str(e)}")
+            # Restaurar estado em caso de erro
             self.ui.attach_btn.setEnabled(True)
             self.ui.attach_btn.setText("📎")
 
     def on_whatsapp_message_sent(self, message_data: Dict):
-        """Mensagem WhatsApp enviada - com suporte a reações"""
+        """Mensagem WhatsApp enviada - CORRIGIDO sem alterar ícones"""
         print(f"✅ Mensagem WhatsApp enviada: {message_data.get('content', '')[:50]}")
 
-        # Reabilitar botões
+        # CORREÇÃO: Reabilitar botões com ícones originais
         self.ui.send_btn.setEnabled(True)
-        self.ui.send_btn.setText("📤")
+        self.ui.send_btn.setText("➤")  # Ícone original
         self.ui.attach_btn.setEnabled(True)
-        self.ui.attach_btn.setText("📎")
+        self.ui.attach_btn.setText("📎")  # Ícone original
 
         # VALIDAR E CORRIGIR IDs antes de adicionar à interface
         corrections = validate_message_ids(message_data)
@@ -740,23 +742,28 @@ class WhatsAppChatMainWindow(QMainWindow):
             print(f"Erro ao adicionar mensagem à UI: {e}")
 
     def on_whatsapp_message_failed(self, contact_id: str, error_message: str):
-        """Falha no envio WhatsApp"""
+        """Falha no envio WhatsApp - CORRIGIDO"""
         print(f"❌ Falha WhatsApp para {contact_id}: {error_message}")
 
-        # Reabilitar botões
+        # CORREÇÃO: Reabilitar botões com ícones originais
         self.ui.send_btn.setEnabled(True)
-        self.ui.send_btn.setText("📤")
+        self.ui.send_btn.setText("➤")  # Ícone original
         self.ui.attach_btn.setEnabled(True)
-        self.ui.attach_btn.setText("📎")
+        self.ui.attach_btn.setText("📎")  # Ícone original
 
         # Mostrar erro
         QMessageBox.critical(self, "Erro WhatsApp", f"Falha no envio:\n{error_message}")
 
     def on_whatsapp_progress(self, progress: int):
-        """Progresso do envio"""
-        if progress < 100:
-            self.ui.send_btn.setText(f"📤")
-            self.ui.attach_btn.setText(f"📤")
+        """Progresso do envio - CORRIGIDO"""
+        if progress < 100 and progress > 0:
+            # Mostrar progresso sem alterar ícones principais
+            self.ui.send_btn.setText(f"{progress}%")
+            self.ui.attach_btn.setText(f"{progress}%")
+        elif progress == 0:
+            # Restaurar ícones originais quando não há progresso
+            self.ui.send_btn.setText("➤")
+            self.ui.attach_btn.setText("📎")
 
     def on_whatsapp_connection_status(self, connected: bool):
         """Status da conexão WhatsApp"""
@@ -884,6 +891,7 @@ class WhatsAppChatMainWindow(QMainWindow):
 
         dialog.exec()
 
+
     def test_connection(self, status_widget):
         """Testa conexão"""
         status_widget.setText("🔄 Testando...")
@@ -939,7 +947,7 @@ class WhatsAppChatMainWindow(QMainWindow):
         self.ui.update_connection_status(connected)
 
     def on_contacts_loaded(self, contacts: List[Dict]):
-        """Contatos carregados"""
+        """Contatos carregados com conexão de seleção"""
         print(f"📋 {len(contacts)} contatos carregados")
 
         self.ui.clear_contacts_list()
@@ -947,20 +955,22 @@ class WhatsAppChatMainWindow(QMainWindow):
 
         for contact_data in contacts:
             contact_widget = self.ui.add_contact_to_list(contact_data)
+
+            # CORREÇÃO: Conectar sinal para seleção de contato
             contact_widget.clicked.connect(self.on_contact_selected)
 
             contact_id = contact_data['contact_id']
             self.loaded_contacts[contact_id] = contact_data
 
-        print("✅ Lista atualizada")
+        print("✅ Lista atualizada com elevação de seleção")
 
     def on_contact_selected(self, contact_id: str):
-        """Contato selecionado"""
+        """Contato selecionado com feedback visual"""
         if contact_id not in self.loaded_contacts:
             return
 
         contact_data = self.loaded_contacts[contact_id]
-        print(f"👤 Selecionado: {contact_data['contact_name']}")
+        print(f"👤 Selecionado: {contact_data['contact_name']} (com elevação)")
 
         self.current_contact = contact_id
         self.current_contact_data = contact_data
