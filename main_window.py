@@ -707,7 +707,7 @@ class WhatsAppChatMainWindow(QMainWindow):
             self.ui.attach_btn.setText("📎")
 
     def on_whatsapp_message_sent(self, message_data: Dict):
-        """Mensagem WhatsApp enviada - VERSÃO CORRIGIDA"""
+        """Mensagem WhatsApp enviada - com suporte a reações"""
         print(f"✅ Mensagem WhatsApp enviada: {message_data.get('content', '')[:50]}")
 
         # Reabilitar botões
@@ -766,23 +766,18 @@ class WhatsAppChatMainWindow(QMainWindow):
             print("❌ WhatsApp desconectado")
 
     def on_message_deleted_from_ui(self, webhook_message_id: str, chat_id: str):
-        """Callback quando mensagem é deletada na UI"""
+        """Callback quando mensagem é deletada na UI - Não remove da interface"""
         print(f"🗑️ Mensagem deletada via UI:")
         print(f"   Webhook ID: {webhook_message_id}")
         print(f"   Chat ID: {chat_id}")
 
-        # Aqui você pode:
-        # 1. Atualizar o banco de dados local
-        # 2. Remover da cache
-        # 3. Notificar outros componentes
-
+        # Atualizar cache local
         try:
-            # Remover do cache se existir
             if chat_id in self.db_interface._loaded_messages_cache:
                 cache = self.db_interface._loaded_messages_cache[chat_id]
                 if webhook_message_id in cache:
-                    del cache[webhook_message_id]
-                    print("✅ Mensagem removida do cache local")
+                    cache[webhook_message_id]['deleted'] = True
+                    print("✅ Mensagem marcada como deletada no cache local")
         except Exception as e:
             print(f"⚠️ Erro ao atualizar cache: {e}")
 
@@ -793,7 +788,7 @@ class WhatsAppChatMainWindow(QMainWindow):
         print(f"   Novo texto: {new_text[:50]}...")
         print(f"   Chat ID: {chat_id}")
 
-        # Atualizar cache local se existir
+        # Atualizar cache local
         try:
             if chat_id in self.db_interface._loaded_messages_cache:
                 cache = self.db_interface._loaded_messages_cache[chat_id]
@@ -810,6 +805,16 @@ class WhatsAppChatMainWindow(QMainWindow):
         print(f"   Webhook ID: {webhook_message_id}")
         print(f"   Reação: {reaction}")
         print(f"   Chat ID: {chat_id}")
+
+        # Atualizar cache local
+        try:
+            if chat_id in self.db_interface._loaded_messages_cache:
+                cache = self.db_interface._loaded_messages_cache[chat_id]
+                if webhook_message_id in cache:
+                    cache[webhook_message_id]['reaction'] = reaction
+                    print("✅ Cache local atualizado com reação")
+        except Exception as e:
+            print(f"⚠️ Erro ao atualizar cache: {e}")
 
     def show_whatsapp_config(self):
         """Mostra configurações WhatsApp"""
@@ -1046,7 +1051,7 @@ class WhatsAppChatMainWindow(QMainWindow):
         print(f"✅ {self.messages_loaded_count} mensagens renderizadas")
 
     def on_new_messages_received_incremental(self, new_messages: List[Dict]):
-        """Novas mensagens incrementais"""
+        """Novas mensagens incrementais - com suporte a reações"""
         if not new_messages:
             return
 
@@ -1054,6 +1059,22 @@ class WhatsAppChatMainWindow(QMainWindow):
 
         for message_data in new_messages:
             try:
+                # Verificar se é uma reação a uma mensagem existente
+                if self._is_reaction_update(message_data):
+                    self._handle_reaction_update(message_data)
+                    continue
+
+                # Verificar se é uma edição de mensagem existente
+                if self._is_message_edit(message_data):
+                    self._handle_message_edit(message_data)
+                    continue
+
+                # Verificar se é uma exclusão de mensagem existente
+                if self._is_message_deletion(message_data):
+                    self._handle_message_deletion(message_data)
+                    continue
+
+                # Mensagem nova normal
                 message_widget = MessageRenderer.create_message_widget(
                     message_data,
                     whatsapp_api=self.message_sender.whatsapp_api
@@ -1062,7 +1083,104 @@ class WhatsAppChatMainWindow(QMainWindow):
                     self.add_single_message_to_chat(message_widget, message_data, is_new=True)
 
             except Exception as e:
-                print(f"Erro ao adicionar nova mensagem: {e}")
+                print(f"Erro ao processar mensagem: {e}")
+
+    def _is_reaction_update(self, message_data: Dict) -> bool:
+        """Verifica se a mensagem é uma atualização de reação"""
+        # Adapte esta lógica conforme seu banco de dados
+        return (
+                message_data.get('message_type') == 'reaction' or
+                'reaction' in message_data and message_data.get('target_message_id')
+        )
+
+    def _is_reaction_update(self, message_data: Dict) -> bool:
+        """Verifica se a mensagem é uma atualização de reação"""
+        # Adapte esta lógica conforme seu banco de dados
+        return (
+                message_data.get('message_type') == 'reaction' or
+                'reaction' in message_data and message_data.get('target_message_id')
+        )
+
+    def _handle_reaction_update(self, message_data: Dict):
+        """Processa atualização de reação em mensagem existente"""
+        target_message_id = message_data.get('target_message_id') or message_data.get('webhook_message_id')
+        reaction = message_data.get('reaction', '')
+
+        print(f"😀 Processando reação: {reaction} para mensagem {target_message_id}")
+
+        # Encontrar widget da mensagem na interface
+        message_widget = self._find_message_widget_by_id(target_message_id)
+        if message_widget and isinstance(message_widget, MessageBubble):
+            # Atualizar reação no widget
+            message_widget.message_data['reaction'] = reaction
+            message_widget._update_reaction_display(reaction)
+            print(f"✅ Reação atualizada na interface")
+
+    def _is_message_edit(self, message_data: Dict) -> bool:
+        """Verifica se é uma edição de mensagem"""
+        return (
+                message_data.get('event_type') == 'message_edited' or
+                message_data.get('edited', False)
+        )
+
+    def _handle_message_edit(self, message_data: Dict):
+        """Processa edição de mensagem existente"""
+        webhook_message_id = message_data.get('webhook_message_id') or message_data.get('message_id')
+        new_content = message_data.get('content', '')
+
+        print(f"✏️ Processando edição de mensagem {webhook_message_id}")
+
+        # Encontrar widget da mensagem
+        message_widget = self._find_message_widget_by_id(webhook_message_id)
+        if message_widget and isinstance(message_widget, MessageBubble):
+            # Atualizar conteúdo no widget
+            message_widget.message_data['content'] = new_content
+            message_widget.message_data['edited'] = True
+            message_widget._show_as_edited(new_content)
+            print(f"✅ Edição atualizada na interface")
+
+    def _is_message_deletion(self, message_data: Dict) -> bool:
+        """Verifica se é uma exclusão de mensagem"""
+        return (
+                message_data.get('event_type') == 'message_deleted' or
+                message_data.get('deleted', False)
+        )
+
+    def _handle_message_deletion(self, message_data: Dict):
+        """Processa exclusão de mensagem existente"""
+        webhook_message_id = message_data.get('webhook_message_id') or message_data.get('message_id')
+
+        print(f"🗑️ Processando exclusão de mensagem {webhook_message_id}")
+
+        # Encontrar widget da mensagem
+        message_widget = self._find_message_widget_by_id(webhook_message_id)
+        if message_widget and isinstance(message_widget, MessageBubble):
+            # Marcar como deletada no widget
+            message_widget.message_data['deleted'] = True
+            message_widget._show_as_deleted()
+            print(f"✅ Exclusão atualizada na interface")
+
+    def _find_message_widget_by_id(self, webhook_message_id: str) -> Optional[MessageBubble]:
+        """Encontra widget de mensagem pelo ID do webhook"""
+        try:
+            # Percorrer widgets no layout de mensagens
+            for i in range(self.ui.messages_layout.count()):
+                item = self.ui.messages_layout.itemAt(i)
+                if item and item.widget():
+                    widget = item.widget()
+                    if isinstance(widget, MessageBubble):
+                        widget_id = widget.message_data.get('webhook_message_id') or widget.message_data.get(
+                            'message_id')
+                        if widget_id == webhook_message_id:
+                            return widget
+            return None
+        except Exception as e:
+            print(f"Erro ao buscar widget: {e}")
+            return None
+
+
+
+
 
     def add_single_message_to_chat(self, widget, message_data: Dict, is_sent: bool = False, is_new: bool = False):
         """Adiciona uma mensagem e conecta sinais corretamente"""

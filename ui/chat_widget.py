@@ -149,7 +149,7 @@ class MessageBubble(QFrame):
         self.is_fully_setup = True
 
     def _create_bubble(self) -> QFrame:
-        """Cria o balão da mensagem com botão de opções"""
+        """Cria o balão da mensagem com suporte a reações existentes"""
         bubble = QFrame()
         bubble.setMaximumWidth(400)
         bubble.setMinimumWidth(120)
@@ -197,15 +197,29 @@ class MessageBubble(QFrame):
         # Mostrar reação atual se existir
         if 'reaction' in self.message_data and self.message_data['reaction']:
             reaction_label = QLabel(self.message_data['reaction'])
+            reaction_label.setObjectName('reaction_label')
             reaction_label.setStyleSheet("""
                 QLabel {
-                    background-color: rgba(255, 255, 255, 0.3);
-                    border-radius: 10px;
-                    padding: 2px 5px;
-                    font-size: 14px;
+                    background-color: rgba(255, 255, 255, 0.9);
+                    border: 1px solid #e9ecef;
+                    border-radius: 12px;
+                    padding: 4px 8px;
+                    font-size: 16px;
+                    margin-top: 5px;
                 }
             """)
+            reaction_label.setAlignment(Qt.AlignmentFlag.AlignLeft)
             content_container.addWidget(reaction_label)
+
+        # Verificar se mensagem foi editada
+        if self.message_data.get('edited'):
+            content_text_with_edit = f"{content_text} ✏️"
+            self.content_label.setText(content_text_with_edit)
+
+        # Verificar se mensagem foi deletada
+        if self.message_data.get('deleted'):
+            self._show_as_deleted()
+            return bubble
 
         # Horário da mensagem e indicador de status
         status_layout = QHBoxLayout()
@@ -221,6 +235,18 @@ class MessageBubble(QFrame):
 
             status_layout.addWidget(self.time_label, 1)
 
+            # Adicionar indicador de editada se necessário
+            if self.message_data.get('edited'):
+                edited_indicator = QLabel("editada")
+                edited_indicator.setFont(QFont('Segoe UI', 7))
+                edited_indicator.setStyleSheet(f"""
+                    color: {time_color};
+                    font-style: italic;
+                    margin-left: 5px;
+                    margin-top: 3px;
+                """)
+                status_layout.addWidget(edited_indicator)
+
             # Adicionar ícone de status para mensagens enviadas
             if self.is_from_me:
                 status_icon = QLabel("✓")  # Checkmark for delivered
@@ -233,22 +259,24 @@ class MessageBubble(QFrame):
         # Adicionar conteúdo principal
         bubble_layout.addLayout(content_container, 1)
 
-        # Botão de opções (3 pontinhos)
-        self.options_button = MessageOptionsButton()
-        self.options_button.clicked.connect(self.show_options_menu)
-        self.options_button.setVisible(False)  # Inicialmente oculto
+        # Botão de opções (3 pontinhos) - não mostrar se deletada
+        if not self.message_data.get('deleted'):
+            self.options_button = MessageOptionsButton()
+            self.options_button.clicked.connect(self.show_options_menu)
+            self.options_button.setVisible(False)  # Inicialmente oculto
 
-        bubble_layout.addWidget(self.options_button, 0, Qt.AlignmentFlag.AlignRight | Qt.AlignmentFlag.AlignTop)
+            bubble_layout.addWidget(self.options_button, 0, Qt.AlignmentFlag.AlignRight | Qt.AlignmentFlag.AlignTop)
+
+            # Mostrar botão de opções ao passar o mouse
+            bubble.enterEvent = lambda e: self.options_button.setVisible(True) if not self.message_data.get(
+                'deleted') else None
+            bubble.leaveEvent = lambda e: self.options_button.setVisible(False)
 
         # Aplicar estilo visual ao balão
         self._apply_bubble_style(bubble)
 
         # Adicionar sombra suave
         self._add_shadow(bubble)
-
-        # Mostrar botão de opções ao passar o mouse
-        bubble.enterEvent = lambda e: self.options_button.setVisible(True)
-        bubble.leaveEvent = lambda e: self.options_button.setVisible(False)
 
         return bubble
 
@@ -463,53 +491,15 @@ class MessageBubble(QFrame):
         menu.exec(pos)
 
     def edit_message(self):
-        """Edita o conteúdo da mensagem usando ID correto"""
+        """Edita o conteúdo da mensagem e mostra marcação de editada"""
         if not self.webhook_message_id or not self.whatsapp_api:
             return
 
-        # Dialog para editar mensagem
         from PyQt6.QtWidgets import QDialog, QVBoxLayout, QHBoxLayout, QLineEdit, QPushButton, QLabel, QTextEdit
 
         dialog = QDialog(self)
         dialog.setWindowTitle("Editar Mensagem")
         dialog.setFixedWidth(400)
-        dialog.setStyleSheet("""
-           QDialog {
-               background-color: white;
-           }
-           QLabel {
-               color: #2c3e50;
-               font-size: 12px;
-               margin-bottom: 5px;
-           }
-           QTextEdit {
-               border: 1px solid #ddd;
-               border-radius: 6px;
-               padding: 8px;
-               font-size: 13px;
-           }
-           QPushButton {
-               padding: 8px 20px;
-               border-radius: 6px;
-               font-size: 13px;
-               border: none;
-           }
-           QPushButton#cancelButton {
-               background-color: #f8f9fa;
-               color: #6c757d;
-               border: 1px solid #dee2e6;
-           }
-           QPushButton#cancelButton:hover {
-               background-color: #e9ecef;
-           }
-           QPushButton#saveButton {
-               background-color: #28a745;
-               color: white;
-           }
-           QPushButton#saveButton:hover {
-               background-color: #218838;
-           }
-       """)
 
         layout = QVBoxLayout(dialog)
         layout.setSpacing(15)
@@ -528,11 +518,9 @@ class MessageBubble(QFrame):
         button_layout = QHBoxLayout()
 
         cancel_btn = QPushButton("Cancelar")
-        cancel_btn.setObjectName("cancelButton")
         cancel_btn.clicked.connect(dialog.reject)
 
         save_btn = QPushButton("Salvar")
-        save_btn.setObjectName("saveButton")
         save_btn.clicked.connect(dialog.accept)
 
         button_layout.addWidget(cancel_btn)
@@ -559,11 +547,10 @@ class MessageBubble(QFrame):
                     if result:
                         # Atualizar localmente
                         self.message_data['content'] = new_text
-                        message_type = self.message_data.get('message_type', 'text')
-                        type_icon = self._get_type_icon(message_type)
-                        self.content_label.setText(f"{type_icon}{new_text}")
+                        self.message_data['edited'] = True
+                        self._show_as_edited(new_text)
 
-                        # Emitir sinal para notificar a edição
+                        # Emitir sinal
                         self.message_edited.emit(self.webhook_message_id, new_text, self.chat_id)
                     else:
                         QMessageBox.warning(self, "Erro", "Não foi possível editar a mensagem.")
@@ -571,15 +558,57 @@ class MessageBubble(QFrame):
                 except Exception as e:
                     QMessageBox.critical(self, "Erro", f"Erro ao editar mensagem: {str(e)}")
 
+    def _show_as_edited(self, new_text: str):
+        """Mostra mensagem como editada com marcação visual"""
+        try:
+            # Atualizar texto com marcação de editada
+            message_type = self.message_data.get('message_type', 'text')
+            type_icon = self._get_type_icon(message_type)
+
+            edited_text = f"{type_icon}{new_text} ✏️"
+            self.content_label.setText(edited_text)
+
+            # Encontrar o layout de status para adicionar marcação
+            bubble_layout = self.bubble_frame.layout()
+            if bubble_layout:
+                content_layout = bubble_layout.itemAt(0).layout()
+                if content_layout:
+                    # Procurar layout de status
+                    for i in range(content_layout.count()):
+                        item = content_layout.itemAt(i)
+                        if item and item.layout():
+                            status_layout = item.layout()
+
+                            # Adicionar indicador de editada
+                            if not hasattr(self, 'edited_indicator'):
+                                self.edited_indicator = QLabel("editada")
+                                self.edited_indicator.setFont(QFont('Segoe UI', 7))
+                                self.edited_indicator.setStyleSheet("""
+                                    color: rgba(255,255,255,0.6);
+                                    font-style: italic;
+                                    margin-left: 5px;
+                                """ if self.is_from_me else """
+                                    color: #95a5a6;
+                                    font-style: italic;
+                                    margin-left: 5px;
+                                """)
+                                status_layout.addWidget(self.edited_indicator)
+                            break
+
+        except Exception as e:
+            print(f"Erro ao marcar como editada: {e}")
+
+
+
     def delete_message(self):
-        """Apaga a mensagem usando o ID correto do webhook"""
+        """Marca mensagem como deletada sem remover da interface"""
         if not self.webhook_message_id or not self.whatsapp_api:
             print(f"❌ Não é possível deletar - Webhook ID: {self.webhook_message_id}, API: {bool(self.whatsapp_api)}")
             return
 
         from PyQt6.QtWidgets import QMessageBox
 
-        # Dialog de confirmação mais limpo
+        # Dialog de confirmação
         msg_box = QMessageBox(self)
         msg_box.setWindowTitle("Deletar Mensagem")
         msg_box.setText("Deseja deletar esta mensagem?")
@@ -587,96 +616,35 @@ class MessageBubble(QFrame):
         msg_box.setStandardButtons(QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No)
         msg_box.setDefaultButton(QMessageBox.StandardButton.No)
 
-        # Personalizar botões
         yes_button = msg_box.button(QMessageBox.StandardButton.Yes)
         yes_button.setText("Deletar")
         no_button = msg_box.button(QMessageBox.StandardButton.No)
         no_button.setText("Cancelar")
 
-        msg_box.setStyleSheet("""
-           QMessageBox {
-               background-color: white;
-           }
-           QMessageBox QLabel {
-               color: #2c3e50;
-               font-size: 13px;
-           }
-           QPushButton {
-               padding: 8px 20px;
-               border-radius: 6px;
-               font-size: 12px;
-               border: none;
-               min-width: 80px;
-           }
-           QPushButton[text="Deletar"] {
-               background-color: #dc3545;
-               color: white;
-           }
-           QPushButton[text="Deletar"]:hover {
-               background-color: #c82333;
-           }
-           QPushButton[text="Cancelar"] {
-               background-color: #f8f9fa;
-               color: #6c757d;
-               border: 1px solid #dee2e6;
-           }
-           QPushButton[text="Cancelar"]:hover {
-               background-color: #e9ecef;
-           }
-       """)
-
         if msg_box.exec() == QMessageBox.StandardButton.Yes:
             try:
-                print(f"🗑️ Tentando deletar mensagem:")
-                print(f"   Webhook ID: {self.webhook_message_id}")
-                print(f"   Chat ID: {self.chat_id}")
-
-                # Usar o chat_id ou sender_id para o número de telefone
                 phone_number = self.chat_id or self.message_data.get('sender_id', '')
 
                 if not phone_number:
                     QMessageBox.warning(self, "Erro", "Não foi possível identificar o destinatário.")
                     return
 
-                # Fazer a chamada para a API com o ID correto do webhook
+                # Fazer a chamada para a API
                 result = self.whatsapp_api.deleta_mensagem(
                     phone_number=phone_number,
                     message_ids=[self.webhook_message_id]
                 )
 
-                print(f"📋 Resultado da API: {result}")
-
                 if result and isinstance(result, dict):
-                    # Verificar se a API retornou sucesso
                     if result.get('success') or result.get('status') == 'success':
                         print(f"✅ Mensagem deletada com sucesso!")
 
-                        # Emitir sinal com IDs corretos
-                        self.message_deleted.emit(self.webhook_message_id, self.chat_id)
-
-                        # Esconder a mensagem na interface
-                        self.setVisible(False)
-
-                        # Marcar como deletada
+                        # Marcar como deletada localmente
                         self.message_data['deleted'] = True
+                        self._show_as_deleted()
 
-                        # Feedback de sucesso mais discreto
-                        success_msg = QMessageBox(self)
-                        success_msg.setWindowTitle("Sucesso")
-                        success_msg.setText("Mensagem deletada com sucesso")
-                        success_msg.setIcon(QMessageBox.Icon.Information)
-                        success_msg.setStandardButtons(QMessageBox.StandardButton.Ok)
-                        success_msg.button(QMessageBox.StandardButton.Ok).setText("OK")
-                        success_msg.setStyleSheet("""
-                           QMessageBox {
-                               background-color: white;
-                           }
-                           QMessageBox QLabel {
-                               color: #28a745;
-                               font-size: 13px;
-                           }
-                       """)
-                        success_msg.exec()
+                        # Emitir sinal
+                        self.message_deleted.emit(self.webhook_message_id, self.chat_id)
                     else:
                         error_msg = result.get('error', 'Resposta inesperada da API')
                         QMessageBox.warning(self, "Erro", f"Falha ao deletar: {error_msg}")
@@ -686,6 +654,41 @@ class MessageBubble(QFrame):
             except Exception as e:
                 print(f"❌ Erro ao deletar mensagem: {e}")
                 QMessageBox.critical(self, "Erro", f"Erro ao apagar mensagem: {str(e)}")
+
+    def _show_as_deleted(self):
+        """Mostra mensagem como deletada (em vermelho) sem remover"""
+        try:
+            # Atualizar conteúdo
+            deleted_text = "🗑️ Esta mensagem foi apagada"
+            self.content_label.setText(deleted_text)
+            self.content_label.setStyleSheet("""
+                color: #e74c3c; 
+                background: transparent; 
+                border: none;
+                font-style: italic;
+                text-decoration: line-through;
+            """)
+
+            # Estilo do balão deletado
+            self.bubble_frame.setStyleSheet("""
+                QFrame {
+                    background-color: #ffeaea;
+                    border: 2px solid #e74c3c;
+                    border-radius: 18px;
+                    opacity: 0.7;
+                }
+            """)
+
+            # Desabilitar menu de opções
+            if hasattr(self, 'options_button'):
+                self.options_button.setVisible(False)
+
+            # Remover interações
+            self.bubble_frame.enterEvent = lambda e: None
+            self.bubble_frame.leaveEvent = lambda e: None
+
+        except Exception as e:
+            print(f"Erro ao marcar como deletada: {e}")
 
     def add_reaction(self, reaction: Optional[str]):
         """Adiciona ou remove reação usando ID correto"""
@@ -699,7 +702,7 @@ class MessageBubble(QFrame):
                 # Adicionar reação
                 result = self.whatsapp_api.enviar_reacao(
                     phone=phone_number,
-                    message_id=self.webhook_message_id,  # ID correto do webhook
+                    message_id=self.webhook_message_id,
                     reaction=reaction,
                     delay=1
                 )
@@ -707,13 +710,14 @@ class MessageBubble(QFrame):
                 # Remover reação
                 result = self.whatsapp_api.removerReacao(
                     phone=phone_number,
-                    menssagem_id=self.webhook_message_id,  # ID correto do webhook
+                    menssagem_id=self.webhook_message_id,
                     dalay=1
                 )
 
             if result:
-                # Atualizar estado local
+                # Atualizar estado local IMEDIATAMENTE
                 self.message_data['reaction'] = reaction
+                self._update_reaction_display(reaction)
 
                 # Emitir sinal
                 self.message_reaction.emit(self.webhook_message_id, reaction or '', self.chat_id)
@@ -724,6 +728,54 @@ class MessageBubble(QFrame):
         except Exception as e:
             from PyQt6.QtWidgets import QMessageBox
             QMessageBox.critical(self, "Erro", f"Erro ao reagir à mensagem: {str(e)}")
+
+    def _update_reaction_display(self, reaction: Optional[str]):
+        """Atualiza a exibição da reação na interface"""
+        try:
+            # Encontrar layout de conteúdo
+            bubble_layout = self.bubble_frame.layout()
+            if not bubble_layout:
+                return
+
+            content_layout = bubble_layout.itemAt(0).layout()
+            if not content_layout:
+                return
+
+            # Procurar por reação existente e remover
+            for i in range(content_layout.count()):
+                item = content_layout.itemAt(i)
+                if item and item.widget():
+                    widget = item.widget()
+                    if hasattr(widget, 'objectName') and widget.objectName() == 'reaction_label':
+                        widget.deleteLater()
+                        break
+
+            # Adicionar nova reação se existe
+            if reaction:
+                reaction_label = QLabel(reaction)
+                reaction_label.setObjectName('reaction_label')
+                reaction_label.setStyleSheet("""
+                    QLabel {
+                        background-color: rgba(255, 255, 255, 0.9);
+                        border: 1px solid #e9ecef;
+                        border-radius: 12px;
+                        padding: 4px 8px;
+                        font-size: 16px;
+                        margin-top: 5px;
+                    }
+                """)
+                reaction_label.setAlignment(Qt.AlignmentFlag.AlignLeft)
+
+                # Inserir antes do layout de status (último item)
+                insert_position = content_layout.count() - 1
+                content_layout.insertWidget(insert_position, reaction_label)
+
+            # Atualizar layout
+            self.bubble_frame.updateGeometry()
+            self.updateGeometry()
+
+        except Exception as e:
+            print(f"Erro ao atualizar reação: {e}")
 
     def sizeHint(self):
         """Retorna tamanho sugerido do widget"""
