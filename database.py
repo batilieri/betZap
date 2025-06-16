@@ -501,9 +501,20 @@ class ChatDatabaseInterface:
             return False
 
     def _process_message_for_chat(self, msg: Dict) -> Optional[Dict]:
-        """Processa mensagem com timestamps corretos"""
+        """Processa mensagem com IDs corretos vinculados - VERSÃO MELHORADA"""
         try:
-            message_id = msg.get('messageId', '')
+            # ID ORIGINAL do webhook (o que realmente importa)
+            webhook_message_id = msg.get('messageId', '')
+
+            # Se não tem messageId, criar um baseado em timestamp + sender
+            if not webhook_message_id:
+                timestamp = msg.get('moment', int(datetime.now().timestamp()))
+                sender_id = msg.get('sender', {}).get('id', '')
+                # Para mensagens enviadas, usar contact_id se disponível
+                if not sender_id:
+                    sender_id = msg.get('contact_id', '')
+                webhook_message_id = f"msg_{timestamp}_{sender_id[-4:] if sender_id else 'temp'}"
+
             is_group = msg.get('isGroup', False)
             from_me = msg.get('fromMe', False)
 
@@ -548,8 +559,18 @@ class ChatDatabaseInterface:
             if message_type != 'text':
                 media_data = self._extract_media_data(msg, message_type)
 
+            # DETERMINAÇÃO CORRETA DO CHAT_ID
+            chat_id = self._extract_chat_id_from_message(msg)
+
+            # Para mensagens enviadas, usar contact_id se chat_id não estiver disponível
+            if not chat_id and from_me:
+                chat_id = msg.get('contact_id', '')
+
+            # IMPORTANTE: Incluir tanto o ID do webhook quanto criar um ID local único
             return {
-                'message_id': message_id,
+                'message_id': webhook_message_id,  # ID REAL do webhook
+                'local_message_id': f"local_{timestamp}_{hash(content[:20]) % 10000}",  # ID local para interface
+                'webhook_message_id': webhook_message_id,  # Backup do ID original
                 'sender_name': sender_name,
                 'content': content,
                 'timestamp': timestamp,
@@ -559,7 +580,10 @@ class ChatDatabaseInterface:
                 'is_group': is_group,
                 'message_type': message_type,
                 'media_data': media_data,
-                'sender_id': sender_id
+                'sender_id': sender_id,
+                'chat_id': chat_id,  # ID correto do chat
+                'contact_id': chat_id,  # Compatibilidade
+                'raw_webhook_data': msg  # Dados originais para debug
             }
 
         except Exception as e:

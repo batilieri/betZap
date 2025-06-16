@@ -43,6 +43,52 @@ except ImportError:
         def envia_mensagem_texto(self, phone, message, delay=1):
             return {"status": "mock", "message": "API não disponível"}
 
+def validate_message_ids(message_data: Dict) -> Dict:
+    """Valida e corrige IDs de mensagem se necessário"""
+    webhook_id = message_data.get('webhook_message_id') or message_data.get('message_id')
+    chat_id = message_data.get('chat_id') or message_data.get('contact_id')
+
+    corrections = {
+        'webhook_id_ok': bool(webhook_id),
+        'chat_id_ok': bool(chat_id),
+        'corrections_made': []
+    }
+
+    # Corrigir webhook_id se necessário
+    if not webhook_id:
+        timestamp = message_data.get('timestamp', int(datetime.now().timestamp()))
+        temp_id = f"temp_{timestamp}_{hash(str(message_data.get('content', '')))[:8]}"
+        message_data['webhook_message_id'] = temp_id
+        message_data['message_id'] = temp_id
+        corrections['corrections_made'].append('webhook_id_generated')
+        corrections['webhook_id_ok'] = True
+        print(f"⚠️ Webhook ID gerado: {temp_id}")
+
+    # Corrigir chat_id se necessário
+    if not chat_id:
+        # Tentar diferentes fontes para chat_id
+        possible_chat_ids = [
+            message_data.get('contact_id'),
+            message_data.get('sender_id'),
+            message_data.get('recipient_id')
+        ]
+
+        for possible_id in possible_chat_ids:
+            if possible_id:
+                message_data['chat_id'] = possible_id
+                corrections['corrections_made'].append(f'chat_id_from_{possible_id}')
+                corrections['chat_id_ok'] = True
+                print(f"⚠️ Chat ID corrigido: {possible_id}")
+                break
+
+    if corrections['webhook_id_ok'] and corrections['chat_id_ok']:
+        print(
+            f"✅ IDs validados/corrigidos - Webhook: {message_data.get('webhook_message_id', '')[:15]}..., Chat: {message_data.get('chat_id', '')[:15]}...")
+    else:
+        print(f"❌ Falha na validação de IDs: {corrections}")
+
+    return corrections
+
 
 class WhatsAppConfig:
     """Configurações da API WhatsApp"""
@@ -217,11 +263,13 @@ class WhatsAppMessageSender(QThread):
         self.progress_update.emit(0)
 
     def _send_single_message(self, message_data: Dict) -> bool:
-        """Envia uma única mensagem"""
+        """Envia uma única mensagem e captura o ID real da resposta"""
         if not self.whatsapp_api:
             return False
 
         try:
+            result = None
+
             if message_data['type'] == 'text':
                 result = self.whatsapp_api.envia_mensagem_texto(
                     phone_number=message_data['contact_id'],
@@ -269,9 +317,17 @@ class WhatsAppMessageSender(QThread):
 
                 self.progress_update.emit(75)
 
+            # ARMAZENAR a resposta da API para usar no _create_sent_message_data
+            self._last_api_response = result if result else {}
+
             # Verificar resultado
             if result and isinstance(result, dict):
                 print(f"✅ Mensagem enviada: {result}")
+
+                # Log do messageId para debug
+                if 'messageId' in result:
+                    print(f"📋 ID real da mensagem: {result['messageId']}")
+
                 return True
             else:
                 print(f"❌ Falha no envio: {result}")
@@ -282,8 +338,12 @@ class WhatsAppMessageSender(QThread):
             return False
 
     def _create_sent_message_data(self, message_data: Dict) -> Dict:
-        """Cria dados da mensagem enviada"""
+        """Cria dados da mensagem enviada com IDs corretos"""
         timestamp = int(datetime.now().timestamp())
+
+        # OBTER O ID REAL DA RESPOSTA DA API se disponível
+        api_response = getattr(self, '_last_api_response', {})
+        real_message_id = api_response.get('messageId', message_data['temp_id'])
 
         if message_data['type'] == 'text':
             content = message_data['content']
@@ -306,8 +366,11 @@ class WhatsAppMessageSender(QThread):
                 'caption': caption
             }
 
+        # CORRIGIR: Incluir todos os IDs necessários
         return {
-            'message_id': message_data['temp_id'],
+            'message_id': real_message_id,  # ID real da API ou temp_id se não disponível
+            'webhook_message_id': real_message_id,  # ID para operações da API
+            'local_message_id': message_data['temp_id'],  # ID temporário local
             'sender_name': 'Você',
             'content': content,
             'timestamp': timestamp,
@@ -318,7 +381,9 @@ class WhatsAppMessageSender(QThread):
             'message_type': message_type,
             'media_data': media_data,
             'sender_id': '',
-            'contact_id': message_data['contact_id']
+            'contact_id': message_data['contact_id'],
+            'chat_id': message_data['contact_id'],  # CORRIGIR: usar contact_id como chat_id
+            'raw_webhook_data': {}  # Dados originais para debug
         }
 
     def _format_phone_number(self, phone: str) -> str:
@@ -535,7 +600,7 @@ class WhatsAppChatMainWindow(QMainWindow):
         self.incremental_updater.new_messages_found.connect(self.on_new_messages_received_incremental)
 
     def setup_ui_connections(self):
-        """Conecta sinais da UI"""
+        """Conecta sinais da UI - VERSÃO ATUALIZADA"""
         self.ui.refresh_btn.clicked.connect(self.refresh_current_chat)
         self.ui.search_input.textChanged.connect(self.filter_contacts)
         self.ui.send_btn.clicked.connect(self.send_whatsapp_text_message)
@@ -642,7 +707,7 @@ class WhatsAppChatMainWindow(QMainWindow):
             self.ui.attach_btn.setText("📎")
 
     def on_whatsapp_message_sent(self, message_data: Dict):
-        """Mensagem WhatsApp enviada"""
+        """Mensagem WhatsApp enviada - VERSÃO CORRIGIDA"""
         print(f"✅ Mensagem WhatsApp enviada: {message_data.get('content', '')[:50]}")
 
         # Reabilitar botões
@@ -650,6 +715,13 @@ class WhatsAppChatMainWindow(QMainWindow):
         self.ui.send_btn.setText("📤")
         self.ui.attach_btn.setEnabled(True)
         self.ui.attach_btn.setText("📎")
+
+        # VALIDAR E CORRIGIR IDs antes de adicionar à interface
+        corrections = validate_message_ids(message_data)
+
+        if not (corrections['webhook_id_ok'] and corrections['chat_id_ok']):
+            print(f"❌ Não foi possível corrigir IDs da mensagem enviada")
+            return
 
         # Adicionar à interface
         try:
@@ -659,6 +731,10 @@ class WhatsAppChatMainWindow(QMainWindow):
             )
             if message_widget:
                 self.add_single_message_to_chat(message_widget, message_data, is_sent=True)
+
+                print(f"✅ Mensagem enviada adicionada à interface:")
+                print(f"   Webhook ID: {message_data.get('webhook_message_id', '')}")
+                print(f"   Chat ID: {message_data.get('chat_id', '')}")
 
         except Exception as e:
             print(f"Erro ao adicionar mensagem à UI: {e}")
@@ -688,6 +764,52 @@ class WhatsAppChatMainWindow(QMainWindow):
             print("✅ WhatsApp conectado")
         else:
             print("❌ WhatsApp desconectado")
+
+    def on_message_deleted_from_ui(self, webhook_message_id: str, chat_id: str):
+        """Callback quando mensagem é deletada na UI"""
+        print(f"🗑️ Mensagem deletada via UI:")
+        print(f"   Webhook ID: {webhook_message_id}")
+        print(f"   Chat ID: {chat_id}")
+
+        # Aqui você pode:
+        # 1. Atualizar o banco de dados local
+        # 2. Remover da cache
+        # 3. Notificar outros componentes
+
+        try:
+            # Remover do cache se existir
+            if chat_id in self.db_interface._loaded_messages_cache:
+                cache = self.db_interface._loaded_messages_cache[chat_id]
+                if webhook_message_id in cache:
+                    del cache[webhook_message_id]
+                    print("✅ Mensagem removida do cache local")
+        except Exception as e:
+            print(f"⚠️ Erro ao atualizar cache: {e}")
+
+    def on_message_edited_from_ui(self, webhook_message_id: str, new_text: str, chat_id: str):
+        """Callback quando mensagem é editada na UI"""
+        print(f"✏️ Mensagem editada via UI:")
+        print(f"   Webhook ID: {webhook_message_id}")
+        print(f"   Novo texto: {new_text[:50]}...")
+        print(f"   Chat ID: {chat_id}")
+
+        # Atualizar cache local se existir
+        try:
+            if chat_id in self.db_interface._loaded_messages_cache:
+                cache = self.db_interface._loaded_messages_cache[chat_id]
+                if webhook_message_id in cache:
+                    cache[webhook_message_id]['content'] = new_text
+                    cache[webhook_message_id]['edited'] = True
+                    print("✅ Cache local atualizado com edição")
+        except Exception as e:
+            print(f"⚠️ Erro ao atualizar cache: {e}")
+
+    def on_message_reaction_from_ui(self, webhook_message_id: str, reaction: str, chat_id: str):
+        """Callback quando reação é adicionada na UI"""
+        print(f"😀 Reação aplicada via UI:")
+        print(f"   Webhook ID: {webhook_message_id}")
+        print(f"   Reação: {reaction}")
+        print(f"   Chat ID: {chat_id}")
 
     def show_whatsapp_config(self):
         """Mostra configurações WhatsApp"""
@@ -943,9 +1065,16 @@ class WhatsAppChatMainWindow(QMainWindow):
                 print(f"Erro ao adicionar nova mensagem: {e}")
 
     def add_single_message_to_chat(self, widget, message_data: Dict, is_sent: bool = False, is_new: bool = False):
-        """Adiciona uma mensagem"""
+        """Adiciona uma mensagem e conecta sinais corretamente"""
         try:
-            # Verificar separador de data
+            # Conectar sinais da mensagem se for MessageBubble
+            if isinstance(widget, MessageBubble):
+                # Conectar sinais com IDs corretos
+                widget.message_deleted.connect(self.on_message_deleted_from_ui)
+                widget.message_edited.connect(self.on_message_edited_from_ui)
+                widget.message_reaction.connect(self.on_message_reaction_from_ui)
+
+            # Verificar separador de data (código existente...)
             need_date_separator = False
             last_widget_date = None
 
@@ -964,14 +1093,14 @@ class WhatsAppChatMainWindow(QMainWindow):
             elif current_date and not last_widget_date:
                 need_date_separator = True
 
-            # Remover stretch
+            # Remover stretch (código existente...)
             stretch_item = None
             if self.ui.messages_layout.count() > 0:
                 last_item = self.ui.messages_layout.itemAt(self.ui.messages_layout.count() - 1)
                 if last_item and last_item.spacerItem():
                     stretch_item = self.ui.messages_layout.takeAt(self.ui.messages_layout.count() - 1)
 
-            # Adicionar separador
+            # Adicionar separador se necessário (código existente...)
             if need_date_separator:
                 formatted_date = MessageRenderer.format_date_separator(current_date)
                 date_separator = MessageRenderer.create_date_separator(formatted_date)
@@ -989,7 +1118,7 @@ class WhatsAppChatMainWindow(QMainWindow):
 
             self.ui.messages_layout.addWidget(widget)
 
-            # Readicionar stretch
+            # Readicionar stretch (código existente...)
             if stretch_item:
                 self.ui.messages_layout.addItem(stretch_item)
             else:
@@ -998,16 +1127,16 @@ class WhatsAppChatMainWindow(QMainWindow):
             self.messages_loaded_count += 1
             self.ui.messages_widget.updateGeometry()
 
-            # Animar
+            # Animar (código existente...)
             if isinstance(widget, MessageBubble):
                 if is_new or is_sent:
                     QTimer.singleShot(50, widget.animate_in)
 
-            # Scroll
+            # Scroll (código existente...)
             if is_new or is_sent:
                 QTimer.singleShot(100, self.ui.scroll_to_bottom)
 
-            print(f"✅ Mensagem adicionada. Total: {self.messages_loaded_count}")
+            print(f"✅ Mensagem adicionada com sinais conectados. Total: {self.messages_loaded_count}")
 
         except Exception as e:
             print(f"❌ Erro ao adicionar mensagem: {e}")

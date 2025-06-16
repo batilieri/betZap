@@ -2,15 +2,15 @@ import json
 import os
 
 import requests
-from mensagem import EnviaTexto
-from mensagem import EnviaDocumento
-from mensagem import EnviaImagem
-from mensagem import EnviaGif
-from mensagem import EnviaAudio
-from mensagem import DeletaMensagem
-from mensagem import EditarMensagem
-from mensagem import EnviarReacao
-from mensagem import RemoverReacao
+from backend.wapi.mensagem.enviosMensagensDocs.enviarTexto import EnviaTexto
+from backend.wapi.mensagem.enviosMensagensDocs.enviarDocumento import EnviaDocumento
+from backend.wapi.mensagem.enviosMensagensDocs.enviarImagem import EnviaImagem
+from backend.wapi.mensagem.enviosMensagensDocs.enviarGif import EnviaGif
+from backend.wapi.mensagem.enviosMensagensDocs.enviarAudio import EnviaAudio
+from backend.wapi.mensagem.deletar.deletarMensagens import DeletaMensagem
+from backend.wapi.mensagem.editar.editarMensagens import EditarMensagem
+from backend.wapi.mensagem.reacao.enviarReacao import EnviarReacao
+from backend.wapi.mensagem.reacao.removerreacao import RemoverReacao
 
 
 class WhatsAppAPI:

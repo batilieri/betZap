@@ -9,7 +9,7 @@ from PyQt6.QtWidgets import (
     QWidget, QVBoxLayout, QHBoxLayout, QLabel, QFrame,
     QGraphicsDropShadowEffect, QPushButton, QScrollArea,
     QSizePolicy, QApplication, QMenu, QFileDialog,
-    QDialog, QLineEdit, QComboBox, QTextEdit, QWidgetAction, QGridLayout
+    QDialog, QLineEdit, QComboBox, QTextEdit, QWidgetAction, QGridLayout, QMessageBox
 )
 from PyQt6.QtCore import Qt, QPropertyAnimation, QRect, QEasingCurve, QTimer, pyqtSignal, QSize, QPoint, QEvent
 from PyQt6.QtGui import QFont, QColor, QPainter, QPainterPath, QPixmap, QIcon, QAction
@@ -65,9 +65,9 @@ class MessageBubble(QFrame):
     """Balão de mensagem com menu de contexto e opções avançadas"""
 
     # Sinais para ações em mensagens
-    message_deleted = pyqtSignal(str)  # ID da mensagem
-    message_edited = pyqtSignal(str, str)  # ID da mensagem, novo texto
-    message_reaction = pyqtSignal(str, str)  # ID da mensagem, emoji de reação
+    message_deleted = pyqtSignal(str, str)  # webhook_message_id, chat_id
+    message_edited = pyqtSignal(str, str, str)  # webhook_message_id, novo_texto, chat_id
+    message_reaction = pyqtSignal(str, str, str)  # webhook_message_id, emoji, chat_id
 
     def __init__(self, message_data: Dict, is_from_me: bool = False, whatsapp_api=None):
         super().__init__()
@@ -75,6 +75,17 @@ class MessageBubble(QFrame):
         self.is_from_me = is_from_me
         self.is_fully_setup = False
         self.whatsapp_api = whatsapp_api
+
+        # IDs importantes
+        self.webhook_message_id = message_data.get('webhook_message_id', message_data.get('message_id', ''))
+        self.local_message_id = message_data.get('local_message_id', '')
+        self.chat_id = message_data.get('chat_id', '')
+
+        print(f"📝 Criando MessageBubble:")
+        print(f"   Webhook ID: {self.webhook_message_id}")
+        print(f"   Local ID: {self.local_message_id}")
+        print(f"   Chat ID: {self.chat_id}")
+
         self.setup_ui()
         self.setup_animation()
 
@@ -450,23 +461,27 @@ class MessageBubble(QFrame):
         menu.exec(pos)
 
     def edit_message(self):
-        """Edita o conteúdo da mensagem"""
-        message_id = self.message_data.get('message_id')
-
-        if not message_id or not self.whatsapp_api:
+        """Edita o conteúdo da mensagem usando ID correto"""
+        if not self.webhook_message_id or not self.whatsapp_api:
             return
 
         # Dialog para editar mensagem
+        from PyQt6.QtWidgets import QDialog, QVBoxLayout, QHBoxLayout, QLineEdit, QPushButton, QLabel, QTextEdit
+
         dialog = QDialog(self)
         dialog.setWindowTitle("✏️ Editar Mensagem")
         dialog.setFixedWidth(400)
 
         layout = QVBoxLayout(dialog)
 
+        # Mostrar ID para debug
+        id_label = QLabel(f"ID: {self.webhook_message_id[:30]}...")
+        id_label.setStyleSheet("color: #666; font-size: 9px;")
+        layout.addWidget(id_label)
+
         # Campo de edição
         current_text = self.message_data.get('content', '')
         if current_text.startswith(('🏷️', '📷', '🎥', '🎵', '📄', '📍', '📊', '📱')):
-            # Remover ícone do início
             current_text = current_text[2:].strip()
 
         edit_field = QTextEdit()
@@ -495,13 +510,13 @@ class MessageBubble(QFrame):
             new_text = edit_field.toPlainText()
 
             if new_text != current_text and self.whatsapp_api:
-                # Tentar editar via API
                 try:
-                    # Obter número do destinatário
-                    recipient = self.message_data.get('sender_id', '')
+                    phone_number = self.chat_id or self.message_data.get('sender_id', '')
 
                     result = self.whatsapp_api.editar_mensagem(
-                        recipient, message_id, new_text
+                        phone=phone_number,
+                        message_id=self.webhook_message_id,  # ID correto do webhook
+                        new_text=new_text
                     )
 
                     if result:
@@ -512,72 +527,95 @@ class MessageBubble(QFrame):
                         self.content_label.setText(f"{type_icon}{new_text}")
 
                         # Emitir sinal para notificar a edição
-                        self.message_edited.emit(message_id, new_text)
+                        self.message_edited.emit(self.webhook_message_id, new_text, self.chat_id)
                     else:
-                        # Mostrar erro
-                        from PyQt6.QtWidgets import QMessageBox
                         QMessageBox.warning(self, "Erro", "Não foi possível editar a mensagem.")
 
                 except Exception as e:
-                    from PyQt6.QtWidgets import QMessageBox
                     QMessageBox.critical(self, "Erro", f"Erro ao editar mensagem: {str(e)}")
 
     def delete_message(self):
-        """Apaga a mensagem"""
-        message_id = self.message_data.get('message_id')
-
-        if not message_id or not self.whatsapp_api:
+        """Apaga a mensagem usando o ID correto do webhook"""
+        if not self.webhook_message_id or not self.whatsapp_api:
+            print(f"❌ Não é possível deletar - Webhook ID: {self.webhook_message_id}, API: {bool(self.whatsapp_api)}")
             return
 
         from PyQt6.QtWidgets import QMessageBox
         reply = QMessageBox.question(
             self,
             "Confirmação",
-            "Tem certeza que deseja apagar esta mensagem?",
+            f"Tem certeza que deseja apagar esta mensagem?\n\nID: {self.webhook_message_id[:20]}...",
             QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No
         )
 
         if reply == QMessageBox.StandardButton.Yes:
             try:
-                # Obter número do destinatário
-                recipient = self.message_data.get('sender_id', '')
+                print(f"🗑️ Tentando deletar mensagem:")
+                print(f"   Webhook ID: {self.webhook_message_id}")
+                print(f"   Chat ID: {self.chat_id}")
 
+                # Usar o chat_id ou sender_id para o número de telefone
+                phone_number = self.chat_id or self.message_data.get('sender_id', '')
+
+                if not phone_number:
+                    QMessageBox.warning(self, "Erro", "Não foi possível identificar o destinatário.")
+                    return
+
+                # Fazer a chamada para a API com o ID correto do webhook
                 result = self.whatsapp_api.deleta_mensagem(
-                    recipient, [message_id]
+                    phone_number=phone_number,
+                    message_ids=[self.webhook_message_id]  # Lista com o ID correto
                 )
 
-                if result:
-                    # Emitir sinal para notificar a exclusão
-                    self.message_deleted.emit(message_id)
+                print(f"📋 Resultado da API: {result}")
 
-                    # Esconder a mensagem
-                    self.setVisible(False)
+                if result and isinstance(result, dict):
+                    # Verificar se a API retornou sucesso
+                    if result.get('success') or result.get('status') == 'success':
+                        print(f"✅ Mensagem deletada com sucesso!")
+
+                        # Emitir sinal com IDs corretos
+                        self.message_deleted.emit(self.webhook_message_id, self.chat_id)
+
+                        # Esconder a mensagem na interface
+                        self.setVisible(False)
+
+                        # Marcar como deletada
+                        self.message_data['deleted'] = True
+
+                        QMessageBox.information(self, "Sucesso", "Mensagem deletada com sucesso!")
+                    else:
+                        error_msg = result.get('error', 'Resposta inesperada da API')
+                        QMessageBox.warning(self, "Erro", f"Falha ao deletar: {error_msg}")
                 else:
-                    QMessageBox.warning(self, "Erro", "Não foi possível apagar a mensagem.")
+                    QMessageBox.warning(self, "Erro", "Resposta inválida da API.")
 
             except Exception as e:
+                print(f"❌ Erro ao deletar mensagem: {e}")
                 QMessageBox.critical(self, "Erro", f"Erro ao apagar mensagem: {str(e)}")
 
     def add_reaction(self, reaction: Optional[str]):
-        """Adiciona ou remove reação da mensagem"""
-        message_id = self.message_data.get('message_id')
-
-        if not message_id or not self.whatsapp_api:
+        """Adiciona ou remove reação usando ID correto"""
+        if not self.webhook_message_id or not self.whatsapp_api:
             return
 
         try:
-            # Obter número do destinatário
-            recipient = self.message_data.get('sender_id', '')
+            phone_number = self.chat_id or self.message_data.get('sender_id', '')
 
             if reaction:
                 # Adicionar reação
                 result = self.whatsapp_api.enviar_reacao(
-                    recipient, message_id, reaction, 1
+                    phone=phone_number,
+                    message_id=self.webhook_message_id,  # ID correto do webhook
+                    reaction=reaction,
+                    delay=1
                 )
             else:
                 # Remover reação
                 result = self.whatsapp_api.removerReacao(
-                    recipient, message_id, 1
+                    phone=phone_number,
+                    menssagem_id=self.webhook_message_id,  # ID correto do webhook
+                    dalay=1
                 )
 
             if result:
@@ -585,10 +623,7 @@ class MessageBubble(QFrame):
                 self.message_data['reaction'] = reaction
 
                 # Emitir sinal
-                self.message_reaction.emit(message_id, reaction or '')
-
-                # Recarregar mensagem para mostrar reação
-                # Isso será tratado pelo chat principal via sinal
+                self.message_reaction.emit(self.webhook_message_id, reaction or '', self.chat_id)
             else:
                 from PyQt6.QtWidgets import QMessageBox
                 QMessageBox.warning(self, "Erro", "Não foi possível aplicar a reação.")
