@@ -634,11 +634,22 @@ class ChatDatabaseInterface:
         return max(len(participants), 1)
 
     def _extract_message_content(self, msg: Dict) -> str:
-        """Extrai o conteúdo principal da mensagem"""
+        """CORRIGIDO: Extrai o conteúdo principal da mensagem incluindo áudio"""
         msg_content = msg.get('msgContent', {})
 
         if 'conversation' in msg_content:
             return msg_content['conversation']
+        elif 'audioMessage' in msg_content:
+            # CORREÇÃO: Melhor descrição para mensagens de áudio
+            audio_msg = msg_content['audioMessage']
+            is_ptt = audio_msg.get('ptt', False)
+            seconds = audio_msg.get('seconds', 0)
+
+            if is_ptt:
+                return f'🎙️ Mensagem de voz ({seconds}s)' if seconds > 0 else '🎙️ Mensagem de voz'
+            else:
+                return f'🎵 Áudio ({seconds}s)' if seconds > 0 else '🎵 Áudio'
+
         elif 'stickerMessage' in msg_content:
             return '🏷️ Sticker'
         elif 'imageMessage' in msg_content:
@@ -647,8 +658,6 @@ class ChatDatabaseInterface:
         elif 'videoMessage' in msg_content:
             caption = msg_content['videoMessage'].get('caption', '')
             return f'🎥 Vídeo{": " + caption if caption else ""}'
-        elif 'audioMessage' in msg_content:
-            return '🎵 Mensagem de áudio'
         elif 'documentMessage' in msg_content:
             filename = msg_content['documentMessage'].get('fileName', 'documento')
             return f'📄 {filename}'
@@ -662,35 +671,72 @@ class ChatDatabaseInterface:
             return '📱 Mensagem multimídia'
 
     def _detect_message_type(self, msg: Dict) -> str:
-        """Detecta o tipo da mensagem"""
+        """CORRIGIDO: Detecta o tipo da mensagem com prioridade para áudio"""
         msg_content = msg.get('msgContent', {})
 
+        # DEBUG: Log para verificar detecção
+        print(f"🔍 Detectando tipo de mensagem...")
+        print(f"   msgContent keys: {list(msg_content.keys())}")
+
+        # PRIORIDADE 1: Áudio (incluir audioMessage)
+        if 'audioMessage' in msg_content:
+            print(f"🎵 Detectado: audioMessage")
+            return 'audio'
+
+        # PRIORIDADE 2: Conversação normal
         if 'conversation' in msg_content:
+            print(f"💬 Detectado: conversation")
             return 'text'
-        elif 'stickerMessage' in msg_content:
+
+        # PRIORIDADE 3: Outros tipos de mídia
+        if 'stickerMessage' in msg_content:
+            print(f"🏷️ Detectado: stickerMessage")
             return 'sticker'
         elif 'imageMessage' in msg_content:
+            print(f"📷 Detectado: imageMessage")
             return 'image'
         elif 'videoMessage' in msg_content:
+            print(f"🎥 Detectado: videoMessage")
             return 'video'
-        elif 'audioMessage' in msg_content:
-            return 'audio'
         elif 'documentMessage' in msg_content:
+            print(f"📄 Detectado: documentMessage")
             return 'document'
         elif 'locationMessage' in msg_content:
+            print(f"📍 Detectado: locationMessage")
             return 'location'
         elif 'pollCreationMessageV3' in msg_content:
+            print(f"📊 Detectado: pollCreationMessageV3")
             return 'poll'
         else:
+            print(f"❓ Tipo desconhecido, usando 'unknown'")
             return 'unknown'
 
     def _extract_media_data(self, msg: Dict, message_type: str) -> Dict:
-        """Extrai dados específicos de mídia"""
+        """CORRIGIDO: Extrai dados específicos de mídia incluindo áudio"""
         msg_content = msg.get('msgContent', {})
         media_data = {}
 
         try:
-            if message_type == 'image' and 'imageMessage' in msg_content:
+            if message_type == 'audio' and 'audioMessage' in msg_content:
+                audio = msg_content['audioMessage']
+                print(f"🎵 Extraindo dados de áudio:")
+                print(f"   URL: {audio.get('url', 'N/A')[:50]}...")
+                print(f"   Seconds: {audio.get('seconds', 'N/A')}")
+                print(f"   PTT: {audio.get('ptt', 'N/A')}")
+
+                media_data = {
+                    'url': audio.get('url', ''),
+                    'seconds': audio.get('seconds', 0),
+                    'ptt': audio.get('ptt', False),
+                    'mimetype': audio.get('mimetype', 'audio/ogg'),
+                    'fileLength': audio.get('fileLength', 0),
+                    'fileSha256': audio.get('fileSha256', ''),
+                    'mediaKey': audio.get('mediaKey', ''),
+                    'directPath': audio.get('directPath', ''),
+                    'waveform': audio.get('waveform', '')
+                }
+
+            elif message_type == 'image' and 'imageMessage' in msg_content:
                 image = msg_content['imageMessage']
                 media_data = {
                     'url': image.get('url', ''),
@@ -725,6 +771,7 @@ class ChatDatabaseInterface:
         except Exception as e:
             print(f"⚠️ Erro ao extrair dados de mídia: {e}")
 
+        print(f"📊 Media data extraído: {media_data}")
         return media_data
 
     def _format_phone(self, phone: str) -> str:
