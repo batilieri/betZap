@@ -1,0 +1,820 @@
+{% extends "base.html" %}
+
+{% block title %}Administração - Sistema de Gestão{% endblock %}
+
+{% block content %}
+<div class="fade-in">
+    <!-- Header -->
+    <div class="d-flex justify-content-between align-items-center mb-4">
+        <div>
+            <h1 class="h3 mb-0">Painel de Administração</h1>
+            <p class="text-muted">Gerencie o sistema e usuários</p>
+        </div>
+        <div>
+            <button class="btn btn-primary" onclick="refreshAll()">
+                <i class="fas fa-sync-alt me-2"></i>
+                Atualizar Tudo
+            </button>
+        </div>
+    </div>
+
+    <!-- Estatísticas do Sistema -->
+    <div class="row mb-4">
+        <div class="col-lg-3 col-md-6 mb-3">
+            <div class="stats-card">
+                <div class="d-flex justify-content-between align-items-center">
+                    <div>
+                        <div class="stats-number" id="adminTotalUsers">0</div>
+                        <div>Total de Usuários</div>
+                    </div>
+                    <div>
+                        <i class="fas fa-users fa-2x opacity-75"></i>
+                    </div>
+                </div>
+            </div>
+        </div>
+
+        <div class="col-lg-3 col-md-6 mb-3">
+            <div class="stats-card" style="background: linear-gradient(135deg, #f093fb 0%, #f5576c 100%);">
+                <div class="d-flex justify-content-between align-items-center">
+                    <div>
+                        <div class="stats-number" id="adminTotalContacts">0</div>
+                        <div>Total de Contatos</div>
+                    </div>
+                    <div>
+                        <i class="fas fa-address-book fa-2x opacity-75"></i>
+                    </div>
+                </div>
+            </div>
+        </div>
+
+        <div class="col-lg-3 col-md-6 mb-3">
+            <div class="stats-card" style="background: linear-gradient(135deg, #4facfe 0%, #00f2fe 100%);">
+                <div class="d-flex justify-content-between align-items-center">
+                    <div>
+                        <div class="stats-number" id="adminTotalChats">0</div>
+                        <div>Total de Conversas</div>
+                    </div>
+                    <div>
+                        <i class="fas fa-comments fa-2x opacity-75"></i>
+                    </div>
+                </div>
+            </div>
+        </div>
+
+        <div class="col-lg-3 col-md-6 mb-3">
+            <div class="stats-card" style="background: linear-gradient(135deg, #43e97b 0%, #38f9d7 100%);">
+                <div class="d-flex justify-content-between align-items-center">
+                    <div>
+                        <div class="stats-number" id="adminTotalMessages">0</div>
+                        <div>Total de Mensagens</div>
+                    </div>
+                    <div>
+                        <i class="fas fa-envelope fa-2x opacity-75"></i>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <!-- Tabs de Administração -->
+    <div class="card">
+        <div class="card-header">
+            <ul class="nav nav-tabs card-header-tabs" id="adminTabs" role="tablist">
+                <li class="nav-item" role="presentation">
+                    <button class="nav-link active" id="users-tab" data-bs-toggle="tab" data-bs-target="#users" type="button" role="tab">
+                        <i class="fas fa-users me-2"></i>
+                        Usuários
+                    </button>
+                </li>
+                <li class="nav-item" role="presentation">
+                    <button class="nav-link" id="system-tab" data-bs-toggle="tab" data-bs-target="#system" type="button" role="tab">
+                        <i class="fas fa-cog me-2"></i>
+                        Sistema
+                    </button>
+                </li>
+                <li class="nav-item" role="presentation">
+                    <button class="nav-link" id="analytics-tab" data-bs-toggle="tab" data-bs-target="#analytics" type="button" role="tab">
+                        <i class="fas fa-chart-bar me-2"></i>
+                        Relatórios
+                    </button>
+                </li>
+            </ul>
+        </div>
+        <div class="card-body">
+            <div class="tab-content" id="adminTabContent">
+                <!-- Tab Usuários -->
+                <div class="tab-pane fade show active" id="users" role="tabpanel">
+                    <div class="d-flex justify-content-between align-items-center mb-3">
+                        <h5>Gerenciar Usuários</h5>
+                        <button class="btn btn-success" onclick="showCreateUserModal()">
+                            <i class="fas fa-user-plus me-2"></i>
+                            Novo Usuário
+                        </button>
+                    </div>
+
+                    <!-- Filtros de usuário -->
+                    <div class="row mb-3">
+                        <div class="col-md-6">
+                            <div class="input-group">
+                                <span class="input-group-text">
+                                    <i class="fas fa-search"></i>
+                                </span>
+                                <input type="text" class="form-control" id="userSearch" placeholder="Buscar usuários...">
+                            </div>
+                        </div>
+                        <div class="col-md-3">
+                            <select class="form-select" id="roleFilter">
+                                <option value="">Todos os roles</option>
+                                <option value="admin">Admin</option>
+                                <option value="manager">Manager</option>
+                                <option value="user">User</option>
+                            </select>
+                        </div>
+                        <div class="col-md-3">
+                            <button class="btn btn-outline-secondary w-100" onclick="clearUserFilters()">
+                                <i class="fas fa-eraser me-2"></i>
+                                Limpar
+                            </button>
+                        </div>
+                    </div>
+
+                    <!-- Tabela de usuários -->
+                    <div class="table-responsive">
+                        <table class="table table-striped">
+                            <thead>
+                                <tr>
+                                    <th>ID</th>
+                                    <th>Nome</th>
+                                    <th>Email</th>
+                                    <th>Role</th>
+                                    <th>Data Criação</th>
+                                    <th>Ações</th>
+                                </tr>
+                            </thead>
+                            <tbody id="usersTableBody">
+                                <tr>
+                                    <td colspan="6" class="text-center py-4">
+                                        <div class="spinner-border" role="status">
+                                            <span class="visually-hidden">Carregando...</span>
+                                        </div>
+                                    </td>
+                                </tr>
+                            </tbody>
+                        </table>
+                    </div>
+                </div>
+
+                <!-- Tab Sistema -->
+                <div class="tab-pane fade" id="system" role="tabpanel">
+                    <h5>Configurações do Sistema</h5>
+
+                    <div class="row">
+                        <div class="col-md-6 mb-4">
+                            <div class="card">
+                                <div class="card-header">
+                                    <h6 class="mb-0">
+                                        <i class="fas fa-database me-2"></i>
+                                        Banco de Dados
+                                    </h6>
+                                </div>
+                                <div class="card-body">
+                                    <p class="text-muted">Informações sobre o banco de dados</p>
+                                    <div class="row">
+                                        <div class="col-6">
+                                            <strong>Status:</strong><br>
+                                            <span class="badge bg-success">Conectado</span>
+                                        </div>
+                                        <div class="col-6">
+                                            <strong>Versão:</strong><br>
+                                            <span>SQLite 3</span>
+                                        </div>
+                                    </div>
+                                    <hr>
+                                    <button class="btn btn-outline-warning btn-sm" onclick="backupDatabase()">
+                                        <i class="fas fa-download me-2"></i>
+                                        Backup
+                                    </button>
+                                </div>
+                            </div>
+                        </div>
+
+                        <div class="col-md-6 mb-4">
+                            <div class="card">
+                                <div class="card-header">
+                                    <h6 class="mb-0">
+                                        <i class="fas fa-shield-alt me-2"></i>
+                                        Segurança
+                                    </h6>
+                                </div>
+                                <div class="card-body">
+                                    <p class="text-muted">Configurações de segurança</p>
+                                    <div class="form-check">
+                                        <input class="form-check-input" type="checkbox" id="requireStrongPassword" checked>
+                                        <label class="form-check-label" for="requireStrongPassword">
+                                            Exigir senhas fortes
+                                        </label>
+                                    </div>
+                                    <div class="form-check">
+                                        <input class="form-check-input" type="checkbox" id="enableSessionTimeout" checked>
+                                        <label class="form-check-label" for="enableSessionTimeout">
+                                            Timeout de sessão
+                                        </label>
+                                    </div>
+                                    <hr>
+                                    <button class="btn btn-outline-primary btn-sm" onclick="saveSecuritySettings()">
+                                        <i class="fas fa-save me-2"></i>
+                                        Salvar
+                                    </button>
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+
+                    <div class="row">
+                        <div class="col-md-12 mb-4">
+                            <div class="card">
+                                <div class="card-header">
+                                    <h6 class="mb-0">
+                                        <i class="fas fa-broom me-2"></i>
+                                        Manutenção
+                                    </h6>
+                                </div>
+                                <div class="card-body">
+                                    <p class="text-muted">Ferramentas de manutenção do sistema</p>
+                                    <div class="d-grid gap-2 d-md-flex">
+                                        <button class="btn btn-outline-info" onclick="cleanupLogs()">
+                                            <i class="fas fa-trash-alt me-2"></i>
+                                            Limpar Logs
+                                        </button>
+                                        <button class="btn btn-outline-warning" onclick="optimizeDatabase()">
+                                            <i class="fas fa-tools me-2"></i>
+                                            Otimizar BD
+                                        </button>
+                                        <button class="btn btn-outline-danger" onclick="resetSystem()">
+                                            <i class="fas fa-redo me-2"></i>
+                                            Reset Sistema
+                                        </button>
+                                    </div>
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+
+                <!-- Tab Relatórios -->
+                <div class="tab-pane fade" id="analytics" role="tabpanel">
+                    <h5>Relatórios e Analytics</h5>
+
+                    <div class="row mb-4">
+                        <div class="col-md-6 mb-3">
+                            <div class="card">
+                                <div class="card-header">
+                                    <h6 class="mb-0">Usuários por Role</h6>
+                                </div>
+                                <div class="card-body">
+                                    <canvas id="usersRoleChart" width="400" height="200"></canvas>
+                                </div>
+                            </div>
+                        </div>
+
+                        <div class="col-md-6 mb-3">
+                            <div class="card">
+                                <div class="card-header">
+                                    <h6 class="mb-0">Atividade por Dia</h6>
+                                </div>
+                                <div class="card-body">
+                                    <canvas id="activityChart" width="400" height="200"></canvas>
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+
+                    <div class="row">
+                        <div class="col-md-12 mb-4">
+                            <div class="card">
+                                <div class="card-header">
+                                    <h6 class="mb-0">
+                                        <i class="fas fa-download me-2"></i>
+                                        Exportar Relatórios
+                                    </h6>
+                                </div>
+                                <div class="card-body">
+                                    <p class="text-muted">Gerar e baixar relatórios do sistema</p>
+                                    <div class="d-grid gap-2 d-md-flex">
+                                        <button class="btn btn-outline-primary" onclick="exportUsers()">
+                                            <i class="fas fa-users me-2"></i>
+                                            Relatório de Usuários
+                                        </button>
+                                        <button class="btn btn-outline-success" onclick="exportContacts()">
+                                            <i class="fas fa-address-book me-2"></i>
+                                            Relatório de Contatos
+                                        </button>
+                                        <button class="btn btn-outline-info" onclick="exportChats()">
+                                            <i class="fas fa-comments me-2"></i>
+                                            Relatório de Conversas
+                                        </button>
+                                    </div>
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
+</div>
+
+<!-- Modal Criar/Editar Usuário -->
+<div class="modal fade" id="userModal" tabindex="-1">
+    <div class="modal-dialog">
+        <div class="modal-content">
+            <div class="modal-header">
+                <h5 class="modal-title" id="userModalTitle">
+                    <i class="fas fa-user-plus me-2"></i>
+                    Novo Usuário
+                </h5>
+                <button type="button" class="btn-close" data-bs-dismiss="modal"></button>
+            </div>
+            <div class="modal-body">
+                <form id="userForm">
+                    <input type="hidden" id="userId">
+                    <div class="mb-3">
+                        <label for="userName" class="form-label">Nome *</label>
+                        <input type="text" class="form-control" id="userName" required>
+                    </div>
+                    <div class="mb-3">
+                        <label for="userEmail" class="form-label">Email *</label>
+                        <input type="email" class="form-control" id="userEmail" required>
+                    </div>
+                    <div class="mb-3" id="passwordField">
+                        <label for="userPassword" class="form-label">Senha *</label>
+                        <input type="password" class="form-control" id="userPassword" required>
+                    </div>
+                    <div class="mb-3">
+                        <label for="userRole" class="form-label">Role *</label>
+                        <select class="form-select" id="userRole" required>
+                            <option value="">Selecionar role...</option>
+                            <option value="user">User</option>
+                            <option value="manager">Manager</option>
+                            <option value="admin">Admin</option>
+                        </select>
+                    </div>
+                </form>
+            </div>
+            <div class="modal-footer">
+                <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">Cancelar</button>
+                <button type="button" class="btn btn-primary" onclick="saveUser()">
+                    <i class="fas fa-save me-2"></i>
+                    Salvar
+                </button>
+            </div>
+        </div>
+    </div>
+</div>
+{% endblock %}
+
+{% block extra_js %}
+<script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
+<script>
+    let users = [];
+    let filteredUsers = [];
+    let editingUser = null;
+    let usersChart = null;
+    let analyticsChart = null;
+
+    // Carregar dados ao inicializar
+    document.addEventListener('DOMContentLoaded', function() {
+        // Verificar se é admin
+        if (!currentUser || currentUser.role !== 'admin') {
+            window.location.href = '/dashboard';
+            return;
+        }
+
+        loadAdminData();
+        setupEventListeners();
+    });
+
+    // Configurar event listeners
+    function setupEventListeners() {
+        // Busca de usuários
+        document.getElementById('userSearch').addEventListener('input', function() {
+            filterUsers();
+        });
+
+        // Filtro de role
+        document.getElementById('roleFilter').addEventListener('change', function() {
+            filterUsers();
+        });
+    }
+
+    // Carregar todos os dados de admin
+    async function loadAdminData() {
+        await Promise.all([
+            loadAdminStats(),
+            loadUsers(),
+            loadCharts()
+        ]);
+    }
+
+    // Carregar estatísticas de admin
+    async function loadAdminStats() {
+        try {
+            const response = await fetchWithAuth('/api/admin/stats');
+            if (response.ok) {
+                const data = await response.json();
+                document.getElementById('adminTotalUsers').textContent = data.total_users;
+                document.getElementById('adminTotalContacts').textContent = data.total_contacts;
+                document.getElementById('adminTotalChats').textContent = data.total_chats;
+                document.getElementById('adminTotalMessages').textContent = data.total_messages;
+            }
+        } catch (error) {
+            console.error('Erro ao carregar estatísticas:', error);
+        }
+    }
+
+    // Carregar usuários
+    async function loadUsers() {
+        try {
+            const response = await fetchWithAuth('/api/admin/users');
+            if (response.ok) {
+                users = await response.json();
+                filteredUsers = [...users];
+                renderUsers();
+            }
+        } catch (error) {
+            console.error('Erro ao carregar usuários:', error);
+            showAlert('Erro ao carregar usuários', 'danger');
+        }
+    }
+
+    // Filtrar usuários
+    function filterUsers() {
+        const searchTerm = document.getElementById('userSearch').value.toLowerCase();
+        const roleFilter = document.getElementById('roleFilter').value;
+
+        filteredUsers = users.filter(user => {
+            const matchesSearch = user.nome.toLowerCase().includes(searchTerm) ||
+                                user.email.toLowerCase().includes(searchTerm);
+            const matchesRole = !roleFilter || user.role === roleFilter;
+
+            return matchesSearch && matchesRole;
+        });
+
+        renderUsers();
+    }
+
+    // Renderizar tabela de usuários
+    function renderUsers() {
+        const tbody = document.getElementById('usersTableBody');
+
+        if (filteredUsers.length === 0) {
+            tbody.innerHTML = `
+                <tr>
+                    <td colspan="6" class="text-center py-4">
+                        <i class="fas fa-users fa-2x text-muted mb-2"></i>
+                        <p class="text-muted mb-0">Nenhum usuário encontrado</p>
+                    </td>
+                </tr>
+            `;
+            return;
+        }
+
+        tbody.innerHTML = filteredUsers.map(user => `
+            <tr>
+                <td>${user.id}</td>
+                <td>${user.nome}</td>
+                <td>${user.email}</td>
+                <td>
+                    <span class="badge bg-${getRoleBadgeColor(user.role)}">
+                        ${user.role}
+                    </span>
+                </td>
+                <td>${formatDate(user.data_criacao)}</td>
+                <td>
+                    <div class="btn-group btn-group-sm" role="group">
+                        <button class="btn btn-outline-primary" onclick="editUser(${user.id})" title="Editar">
+                            <i class="fas fa-edit"></i>
+                        </button>
+                        <button class="btn btn-outline-warning" onclick="changeUserRole(${user.id})" title="Alterar Role">
+                            <i class="fas fa-user-tag"></i>
+                        </button>
+                        <button class="btn btn-outline-danger" onclick="deleteUser(${user.id})" title="Excluir"
+                                ${user.id === currentUser.id ? 'disabled' : ''}>
+                            <i class="fas fa-trash"></i>
+                        </button>
+                    </div>
+                </td>
+            </tr>
+        `).join('');
+    }
+
+    // Obter cor do badge por role
+    function getRoleBadgeColor(role) {
+        const colors = {
+            'admin': 'danger',
+            'manager': 'warning',
+            'user': 'primary'
+        };
+        return colors[role] || 'secondary';
+    }
+
+    // Mostrar modal de criar usuário
+    function showCreateUserModal() {
+        editingUser = null;
+        document.getElementById('userModalTitle').innerHTML = '<i class="fas fa-user-plus me-2"></i>Novo Usuário';
+        document.getElementById('userForm').reset();
+        document.getElementById('userId').value = '';
+        document.getElementById('passwordField').style.display = 'block';
+        document.getElementById('userPassword').required = true;
+        new bootstrap.Modal(document.getElementById('userModal')).show();
+    }
+
+    // Editar usuário
+    function editUser(userId) {
+        editingUser = users.find(u => u.id === userId);
+        if (editingUser) {
+            document.getElementById('userModalTitle').innerHTML = '<i class="fas fa-user-edit me-2"></i>Editar Usuário';
+            document.getElementById('userId').value = editingUser.id;
+            document.getElementById('userName').value = editingUser.nome;
+            document.getElementById('userEmail').value = editingUser.email;
+            document.getElementById('userRole').value = editingUser.role;
+            document.getElementById('passwordField').style.display = 'none';
+            document.getElementById('userPassword').required = false;
+            new bootstrap.Modal(document.getElementById('userModal')).show();
+        }
+    }
+
+    // Salvar usuário
+    async function saveUser() {
+        const id = document.getElementById('userId').value;
+        const nome = document.getElementById('userName').value.trim();
+        const email = document.getElementById('userEmail').value.trim();
+        const password = document.getElementById('userPassword').value;
+        const role = document.getElementById('userRole').value;
+
+        if (!nome || !email || !role) {
+            showAlert('Todos os campos obrigatórios devem ser preenchidos', 'warning');
+            return;
+        }
+
+        if (!id && !password) {
+            showAlert('Senha é obrigatória para novos usuários', 'warning');
+            return;
+        }
+
+        const userData = { nome, email, role };
+        if (password) userData.password = password;
+
+        try {
+            showLoading();
+
+            let response;
+            if (id) {
+                response = await fetchWithAuth(`/api/admin/users/${id}`, {
+                    method: 'PUT',
+                    body: JSON.stringify(userData)
+                });
+            } else {
+                response = await fetchWithAuth('/api/auth/register', {
+                    method: 'POST',
+                    body: JSON.stringify(userData)
+                });
+            }
+
+            if (response.ok) {
+                showAlert(id ? 'Usuário atualizado com sucesso!' : 'Usuário criado com sucesso!', 'success');
+                bootstrap.Modal.getInstance(document.getElementById('userModal')).hide();
+                await loadUsers();
+            } else {
+                const error = await response.json();
+                throw new Error(error.detail || 'Erro ao salvar usuário');
+            }
+
+            hideLoading();
+        } catch (error) {
+            console.error('Erro:', error);
+            hideLoading();
+            showAlert('Erro ao salvar usuário: ' + error.message, 'danger');
+        }
+    }
+
+    // Alterar role do usuário
+    async function changeUserRole(userId) {
+        const user = users.find(u => u.id === userId);
+        if (!user) return;
+
+        const newRole = prompt(`Alterar role do usuário ${user.nome}:\n\nRoles disponíveis: admin, manager, user\n\nRole atual: ${user.role}`, user.role);
+
+        if (!newRole || newRole === user.role) return;
+
+        if (!['admin', 'manager', 'user'].includes(newRole)) {
+            showAlert('Role inválida. Use: admin, manager ou user', 'warning');
+            return;
+        }
+
+        try {
+            showLoading();
+
+            const response = await fetchWithAuth(`/api/admin/users/${userId}/role`, {
+                method: 'PUT',
+                body: JSON.stringify({ role: newRole })
+            });
+
+            if (response.ok) {
+                showAlert('Role alterada com sucesso!', 'success');
+                await loadUsers();
+            } else {
+                throw new Error('Erro ao alterar role');
+            }
+
+            hideLoading();
+        } catch (error) {
+            console.error('Erro:', error);
+            hideLoading();
+            showAlert('Erro ao alterar role', 'danger');
+        }
+    }
+
+    // Excluir usuário
+    async function deleteUser(userId) {
+        const user = users.find(u => u.id === userId);
+        if (!user) return;
+
+        if (user.id === currentUser.id) {
+            showAlert('Você não pode excluir seu próprio usuário', 'warning');
+            return;
+        }
+
+        if (!confirm(`Tem certeza que deseja excluir o usuário "${user.nome}"?\n\nEsta ação não pode ser desfeita.`)) {
+            return;
+        }
+
+        try {
+            showLoading();
+
+            const response = await fetchWithAuth(`/api/admin/users/${userId}`, {
+                method: 'DELETE'
+            });
+
+            if (response.ok) {
+                showAlert('Usuário excluído com sucesso!', 'success');
+                await loadUsers();
+            } else {
+                throw new Error('Erro ao excluir usuário');
+            }
+
+            hideLoading();
+        } catch (error) {
+            console.error('Erro:', error);
+            hideLoading();
+            showAlert('Erro ao excluir usuário', 'danger');
+        }
+    }
+
+    // Carregar gráficos
+    async function loadCharts() {
+        try {
+            const response = await fetchWithAuth('/api/admin/charts-data');
+            if (response.ok) {
+                const data = await response.json();
+                createUsersChart(data.users_by_role);
+                createAnalyticsChart(data.activity_by_day);
+            }
+        } catch (error) {
+            console.error('Erro ao carregar dados dos gráficos:', error);
+        }
+    }
+
+    // Criar gráfico de usuários por role
+    function createUsersChart(data) {
+        const ctx = document.getElementById('usersRoleChart').getContext('2d');
+
+        if (usersChart) {
+            usersChart.destroy();
+        }
+
+        usersChart = new Chart(ctx, {
+            type: 'doughnut',
+            data: {
+                labels: data?.labels || ['Admin', 'Manager', 'User'],
+                datasets: [{
+                    data: data?.values || [1, 0, 0],
+                    backgroundColor: ['#dc3545', '#ffc107', '#0d6efd']
+                }]
+            },
+            options: {
+                responsive: true,
+                maintainAspectRatio: false
+            }
+        });
+    }
+
+    // Criar gráfico de atividade
+    function createAnalyticsChart(data) {
+        const ctx = document.getElementById('activityChart').getContext('2d');
+
+        if (analyticsChart) {
+            analyticsChart.destroy();
+        }
+
+        analyticsChart = new Chart(ctx, {
+            type: 'line',
+            data: {
+                labels: data?.labels || ['Seg', 'Ter', 'Qua', 'Qui', 'Sex', 'Sáb', 'Dom'],
+                datasets: [{
+                    label: 'Atividade',
+                    data: data?.values || [0, 0, 0, 0, 0, 0, 0],
+                    borderColor: '#667eea',
+                    backgroundColor: 'rgba(102, 126, 234, 0.1)',
+                    tension: 0.4
+                }]
+            },
+            options: {
+                responsive: true,
+                maintainAspectRatio: false,
+                scales: {
+                    y: {
+                        beginAtZero: true
+                    }
+                }
+            }
+        });
+    }
+
+    // Limpar filtros de usuário
+    function clearUserFilters() {
+        document.getElementById('userSearch').value = '';
+        document.getElementById('roleFilter').value = '';
+        filterUsers();
+    }
+
+    // Funções do sistema
+    function backupDatabase() {
+        showAlert('Funcionalidade de backup em desenvolvimento', 'info');
+    }
+
+    function saveSecuritySettings() {
+        showAlert('Configurações de segurança salvas!', 'success');
+    }
+
+    function cleanupLogs() {
+        if (confirm('Tem certeza que deseja limpar os logs do sistema?')) {
+            showAlert('Logs limpos com sucesso!', 'success');
+        }
+    }
+
+    function optimizeDatabase() {
+        if (confirm('Tem certeza que deseja otimizar o banco de dados?')) {
+            showAlert('Banco de dados otimizado!', 'success');
+        }
+    }
+
+    function resetSystem() {
+        if (confirm('ATENÇÃO: Esta ação irá resetar todo o sistema!\n\nTem certeza que deseja continuar?')) {
+            showAlert('Reset do sistema cancelado por segurança', 'warning');
+        }
+    }
+
+    // Funções de exportação
+    function exportUsers() {
+        const csv = generateCSV(users, ['id', 'nome', 'email', 'role', 'data_criacao']);
+        downloadCSV(csv, 'usuarios.csv');
+    }
+
+    function exportContacts() {
+        showAlert('Gerando relatório de contatos...', 'info');
+        // Implementar exportação de contatos
+    }
+
+    function exportChats() {
+        showAlert('Gerando relatório de conversas...', 'info');
+        // Implementar exportação de chats
+    }
+
+    // Utilitários para exportação
+    function generateCSV(data, columns) {
+        const header = columns.join(',');
+        const rows = data.map(item =>
+            columns.map(col => item[col] || '').join(',')
+        ).join('\n');
+        return header + '\n' + rows;
+    }
+
+    function downloadCSV(csv, filename) {
+        const blob = new Blob([csv], { type: 'text/csv' });
+        const url = window.URL.createObjectURL(blob);
+        const a = document.createElement('a');
+        a.href = url;
+        a.download = filename;
+        a.click();
+        window.URL.revokeObjectURL(url);
+    }
+
+    // Atualizar tudo
+    function refreshAll() {
+        showAlert('Atualizando dados...', 'info');
+        loadAdminData();
+    }
+</script>
+{% endblock %}

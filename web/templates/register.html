@@ -1,0 +1,459 @@
+<!DOCTYPE html>
+<html lang="pt-BR">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Cadastro - Sistema de Gestão</title>
+    <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/css/bootstrap.min.css" rel="stylesheet">
+    <link href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.0.0/css/all.min.css" rel="stylesheet">
+    <style>
+        body {
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            min-height: 100vh;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
+        }
+
+        .register-container {
+            background: white;
+            border-radius: 20px;
+            box-shadow: 0 20px 40px rgba(0,0,0,0.1);
+            overflow: hidden;
+            max-width: 450px;
+            width: 100%;
+            margin: 20px;
+        }
+
+        .register-header {
+            background: linear-gradient(135deg, #2c3e50, #34495e);
+            color: white;
+            padding: 40px 30px;
+            text-align: center;
+        }
+
+        .register-header h2 {
+            margin: 0;
+            font-weight: 600;
+        }
+
+        .register-header p {
+            margin: 10px 0 0 0;
+            opacity: 0.8;
+        }
+
+        .register-body {
+            padding: 40px 30px;
+        }
+
+        .form-control {
+            border-radius: 10px;
+            border: 2px solid #e9ecef;
+            padding: 12px 15px;
+            font-size: 16px;
+            transition: all 0.3s ease;
+        }
+
+        .form-control:focus {
+            border-color: #667eea;
+            box-shadow: 0 0 0 0.2rem rgba(102, 126, 234, 0.25);
+        }
+
+        .input-group {
+            margin-bottom: 20px;
+        }
+
+        .input-group-text {
+            border-radius: 10px 0 0 10px;
+            border: 2px solid #e9ecef;
+            border-right: none;
+            background-color: #f8f9fa;
+        }
+
+        .input-group .form-control {
+            border-radius: 0 10px 10px 0;
+            border-left: none;
+        }
+
+        .btn-register {
+            background: linear-gradient(135deg, #667eea, #764ba2);
+            border: none;
+            border-radius: 10px;
+            padding: 12px;
+            font-size: 16px;
+            font-weight: 600;
+            width: 100%;
+            color: white;
+            transition: all 0.3s ease;
+        }
+
+        .btn-register:hover {
+            transform: translateY(-2px);
+            box-shadow: 0 10px 20px rgba(102, 126, 234, 0.3);
+            color: white;
+        }
+
+        .btn-register:disabled {
+            opacity: 0.6;
+            transform: none;
+            box-shadow: none;
+        }
+
+        .login-link {
+            text-align: center;
+            margin-top: 20px;
+            padding-top: 20px;
+            border-top: 1px solid #e9ecef;
+        }
+
+        .login-link a {
+            color: #667eea;
+            text-decoration: none;
+            font-weight: 600;
+        }
+
+        .login-link a:hover {
+            color: #764ba2;
+        }
+
+        .alert {
+            border-radius: 10px;
+            border: none;
+            margin-bottom: 20px;
+        }
+
+        .loading-spinner {
+            display: none;
+        }
+
+        .fade-in {
+            animation: fadeIn 0.8s ease-in;
+        }
+
+        @keyframes fadeIn {
+            from {
+                opacity: 0;
+                transform: translateY(30px);
+            }
+            to {
+                opacity: 1;
+                transform: translateY(0);
+            }
+        }
+
+        .password-strength {
+            margin-top: 5px;
+        }
+
+        .strength-bar {
+            height: 4px;
+            border-radius: 2px;
+            background-color: #e9ecef;
+            overflow: hidden;
+        }
+
+        .strength-fill {
+            height: 100%;
+            transition: all 0.3s ease;
+            width: 0%;
+        }
+
+        .strength-weak { background-color: #dc3545; }
+        .strength-medium { background-color: #ffc107; }
+        .strength-strong { background-color: #28a745; }
+
+        @media (max-width: 576px) {
+            .register-container {
+                margin: 10px;
+            }
+
+            .register-header {
+                padding: 30px 20px;
+            }
+
+            .register-body {
+                padding: 30px 20px;
+            }
+        }
+    </style>
+</head>
+<body>
+    <div class="register-container fade-in">
+        <div class="register-header">
+            <i class="fas fa-user-plus fa-3x mb-3"></i>
+            <h2>Criar Conta</h2>
+            <p>Junte-se ao Sistema de Gestão</p>
+        </div>
+        <div class="register-body">
+            <div id="alertContainer"></div>
+
+            <form id="registerForm">
+                <div class="input-group">
+                    <span class="input-group-text">
+                        <i class="fas fa-user"></i>
+                    </span>
+                    <input type="text" class="form-control" id="nome" placeholder="Seu nome completo" required>
+                </div>
+
+                <div class="input-group">
+                    <span class="input-group-text">
+                        <i class="fas fa-envelope"></i>
+                    </span>
+                    <input type="email" class="form-control" id="email" placeholder="Seu email" required>
+                </div>
+
+                <div class="input-group">
+                    <span class="input-group-text">
+                        <i class="fas fa-lock"></i>
+                    </span>
+                    <input type="password" class="form-control" id="password" placeholder="Sua senha" required minlength="6">
+                </div>
+
+                <!-- Indicador de força da senha -->
+                <div class="password-strength">
+                    <div class="strength-bar">
+                        <div class="strength-fill" id="strengthFill"></div>
+                    </div>
+                    <small class="text-muted" id="strengthText">Digite uma senha para ver a força</small>
+                </div>
+
+                <div class="input-group">
+                    <span class="input-group-text">
+                        <i class="fas fa-lock"></i>
+                    </span>
+                    <input type="password" class="form-control" id="confirmPassword" placeholder="Confirme sua senha" required>
+                </div>
+
+                <div class="input-group">
+                    <span class="input-group-text">
+                        <i class="fas fa-user-tag"></i>
+                    </span>
+                    <select class="form-control" id="role" required>
+                        <option value="">Selecione seu tipo de usuário</option>
+                        <option value="user">Usuário</option>
+                        <option value="manager">Gerente</option>
+                    </select>
+                </div>
+
+                <button type="submit" class="btn btn-register" id="registerBtn">
+                    <span class="register-text">Criar Conta</span>
+                    <span class="loading-spinner">
+                        <i class="fas fa-spinner fa-spin"></i> Criando conta...
+                    </span>
+                </button>
+            </form>
+
+            <div class="login-link">
+                <p>Já tem uma conta? <a href="/login">Faça login aqui</a></p>
+            </div>
+        </div>
+    </div>
+
+    <script src="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/js/bootstrap.bundle.min.js"></script>
+    <script>
+        document.addEventListener('DOMContentLoaded', function() {
+            // Verificar se já está logado
+            if (localStorage.getItem('authToken')) {
+                window.location.href = '/dashboard';
+                return;
+            }
+
+            const form = document.getElementById('registerForm');
+            const registerBtn = document.getElementById('registerBtn');
+            const registerText = document.querySelector('.register-text');
+            const loadingSpinner = document.querySelector('.loading-spinner');
+            const passwordInput = document.getElementById('password');
+            const confirmPasswordInput = document.getElementById('confirmPassword');
+
+            // Verificador de força da senha
+            passwordInput.addEventListener('input', function() {
+                checkPasswordStrength(this.value);
+            });
+
+            // Verificar se as senhas coincidem
+            confirmPasswordInput.addEventListener('input', function() {
+                checkPasswordMatch();
+            });
+
+            form.addEventListener('submit', async function(e) {
+                e.preventDefault();
+
+                const nome = document.getElementById('nome').value.trim();
+                const email = document.getElementById('email').value.trim();
+                const password = document.getElementById('password').value;
+                const confirmPassword = document.getElementById('confirmPassword').value;
+                const role = document.getElementById('role').value;
+
+                // Validações
+                if (!nome || !email || !password || !confirmPassword || !role) {
+                    showAlert('Por favor, preencha todos os campos', 'warning');
+                    return;
+                }
+
+                if (password.length < 6) {
+                    showAlert('A senha deve ter pelo menos 6 caracteres', 'warning');
+                    return;
+                }
+
+                if (password !== confirmPassword) {
+                    showAlert('As senhas não coincidem', 'warning');
+                    return;
+                }
+
+                if (!isValidEmail(email)) {
+                    showAlert('Por favor, digite um email válido', 'warning');
+                    return;
+                }
+
+                // Mostrar loading
+                setLoading(true);
+
+                try {
+                    const response = await fetch('/api/auth/register', {
+                        method: 'POST',
+                        headers: {
+                            'Content-Type': 'application/json'
+                        },
+                        body: JSON.stringify({
+                            nome: nome,
+                            email: email,
+                            password: password,
+                            role: role
+                        })
+                    });
+
+                    const data = await response.json();
+
+                    if (response.ok) {
+                        // Registro bem-sucedido
+                        showAlert('Conta criada com sucesso! Redirecionando para login...', 'success');
+
+                        // Redirecionar para login após 2 segundos
+                        setTimeout(() => {
+                            window.location.href = '/login';
+                        }, 2000);
+                    } else {
+                        // Erro no registro
+                        showAlert(data.detail || 'Erro ao criar conta', 'danger');
+                        setLoading(false);
+                    }
+                } catch (error) {
+                    console.error('Erro:', error);
+                    showAlert('Erro de conexão. Tente novamente.', 'danger');
+                    setLoading(false);
+                }
+            });
+
+            // Função para verificar força da senha
+            function checkPasswordStrength(password) {
+                const strengthFill = document.getElementById('strengthFill');
+                const strengthText = document.getElementById('strengthText');
+
+                if (!password) {
+                    strengthFill.style.width = '0%';
+                    strengthFill.className = 'strength-fill';
+                    strengthText.textContent = 'Digite uma senha para ver a força';
+                    return;
+                }
+
+                let strength = 0;
+                let feedback = [];
+
+                // Verificações
+                if (password.length >= 8) strength += 1;
+                else feedback.push('pelo menos 8 caracteres');
+
+                if (/[a-z]/.test(password)) strength += 1;
+                else feedback.push('letras minúsculas');
+
+                if (/[A-Z]/.test(password)) strength += 1;
+                else feedback.push('letras maiúsculas');
+
+                if (/[0-9]/.test(password)) strength += 1;
+                else feedback.push('números');
+
+                if (/[^A-Za-z0-9]/.test(password)) strength += 1;
+                else feedback.push('símbolos');
+
+                // Definir visual baseado na força
+                if (strength <= 2) {
+                    strengthFill.style.width = '33%';
+                    strengthFill.className = 'strength-fill strength-weak';
+                    strengthText.textContent = 'Senha fraca - Adicione: ' + feedback.join(', ');
+                } else if (strength <= 3) {
+                    strengthFill.style.width = '66%';
+                    strengthFill.className = 'strength-fill strength-medium';
+                    strengthText.textContent = 'Senha média - Adicione: ' + feedback.join(', ');
+                } else {
+                    strengthFill.style.width = '100%';
+                    strengthFill.className = 'strength-fill strength-strong';
+                    strengthText.textContent = 'Senha forte!';
+                }
+            }
+
+            // Verificar se senhas coincidem
+            function checkPasswordMatch() {
+                const password = document.getElementById('password').value;
+                const confirmPassword = document.getElementById('confirmPassword').value;
+                const confirmInput = document.getElementById('confirmPassword');
+
+                if (confirmPassword && password !== confirmPassword) {
+                    confirmInput.style.borderColor = '#dc3545';
+                } else if (confirmPassword) {
+                    confirmInput.style.borderColor = '#28a745';
+                } else {
+                    confirmInput.style.borderColor = '#e9ecef';
+                }
+            }
+
+            // Função para validar email
+            function isValidEmail(email) {
+                const emailRegex = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
+                return emailRegex.test(email);
+            }
+
+            // Função para mostrar/ocultar loading
+            function setLoading(loading) {
+                registerBtn.disabled = loading;
+                if (loading) {
+                    registerText.style.display = 'none';
+                    loadingSpinner.style.display = 'inline';
+                } else {
+                    registerText.style.display = 'inline';
+                    loadingSpinner.style.display = 'none';
+                }
+            }
+
+            // Função para mostrar alertas
+            function showAlert(message, type) {
+                const alertContainer = document.getElementById('alertContainer');
+                const alertDiv = document.createElement('div');
+                alertDiv.className = `alert alert-${type} alert-dismissible fade show`;
+                alertDiv.innerHTML = `
+                    ${message}
+                    <button type="button" class="btn-close" data-bs-dismiss="alert"></button>
+                `;
+
+                // Limpar alertas anteriores
+                alertContainer.innerHTML = '';
+                alertContainer.appendChild(alertDiv);
+
+                // Auto-remove após 5 segundos
+                setTimeout(() => {
+                    if (alertDiv.parentNode) {
+                        bootstrap.Alert.getInstance(alertDiv)?.close();
+                    }
+                }, 5000);
+            }
+
+            // Enter para submeter
+            document.addEventListener('keypress', function(e) {
+                if (e.key === 'Enter') {
+                    form.dispatchEvent(new Event('submit'));
+                }
+            });
+        });
+    </script>
+</body>
+</html>

@@ -1,0 +1,524 @@
+{% extends "base.html" %}
+
+{% block title %}Dashboard - Sistema de Gestão{% endblock %}
+
+{% block content %}
+<div class="fade-in">
+    <!-- Header do Dashboard -->
+    <div class="d-flex justify-content-between align-items-center mb-4">
+        <div>
+            <h1 class="h3 mb-0">Dashboard</h1>
+            <p class="text-muted">Bem-vindo ao sistema de gestão</p>
+        </div>
+        <div>
+            <button class="btn btn-primary" onclick="refreshDashboard()">
+                <i class="fas fa-sync-alt"></i> Atualizar
+            </button>
+        </div>
+    </div>
+
+    <!-- Cards de Estatísticas -->
+    <div class="row mb-4">
+        <div class="col-lg-3 col-md-6 mb-3">
+            <div class="stats-card">
+                <div class="d-flex justify-content-between align-items-center">
+                    <div>
+                        <div class="stats-number" id="totalContacts">0</div>
+                        <div>Contatos</div>
+                    </div>
+                    <div>
+                        <i class="fas fa-address-book fa-2x opacity-75"></i>
+                    </div>
+                </div>
+            </div>
+        </div>
+        
+        <div class="col-lg-3 col-md-6 mb-3">
+            <div class="stats-card" style="background: linear-gradient(135deg, #f093fb 0%, #f5576c 100%);">
+                <div class="d-flex justify-content-between align-items-center">
+                    <div>
+                        <div class="stats-number" id="totalChats">0</div>
+                        <div>Conversas</div>
+                    </div>
+                    <div>
+                        <i class="fas fa-comments fa-2x opacity-75"></i>
+                    </div>
+                </div>
+            </div>
+        </div>
+        
+        <div class="col-lg-3 col-md-6 mb-3">
+            <div class="stats-card" style="background: linear-gradient(135deg, #4facfe 0%, #00f2fe 100%);">
+                <div class="d-flex justify-content-between align-items-center">
+                    <div>
+                        <div class="stats-number" id="totalMessages">0</div>
+                        <div>Mensagens</div>
+                    </div>
+                    <div>
+                        <i class="fas fa-envelope fa-2x opacity-75"></i>
+                    </div>
+                </div>
+            </div>
+        </div>
+        
+        <div class="col-lg-3 col-md-6 mb-3" id="usersCard" style="display: none;">
+            <div class="stats-card" style="background: linear-gradient(135deg, #43e97b 0%, #38f9d7 100%);">
+                <div class="d-flex justify-content-between align-items-center">
+                    <div>
+                        <div class="stats-number" id="totalUsers">0</div>
+                        <div>Usuários</div>
+                    </div>
+                    <div>
+                        <i class="fas fa-users fa-2x opacity-75"></i>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <!-- Conteúdo Principal -->
+    <div class="row">
+        <!-- Atividade Recente -->
+        <div class="col-lg-8 mb-4">
+            <div class="card">
+                <div class="card-header">
+                    <h5 class="mb-0">
+                        <i class="fas fa-clock me-2"></i>
+                        Atividade Recente
+                    </h5>
+                </div>
+                <div class="card-body">
+                    <div id="recentActivity">
+                        <div class="loading text-center py-4">
+                            <div class="spinner-border" role="status">
+                                <span class="visually-hidden">Carregando...</span>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </div>
+
+        <!-- Ações Rápidas -->
+        <div class="col-lg-4 mb-4">
+            <div class="card">
+                <div class="card-header">
+                    <h5 class="mb-0">
+                        <i class="fas fa-bolt me-2"></i>
+                        Ações Rápidas
+                    </h5>
+                </div>
+                <div class="card-body">
+                    <div class="d-grid gap-2">
+                        <button class="btn btn-primary" onclick="window.location.href='/contacts'">
+                            <i class="fas fa-plus me-2"></i>
+                            Novo Contato
+                        </button>
+                        <button class="btn btn-success" onclick="window.location.href='/chats'">
+                            <i class="fas fa-comment-dots me-2"></i>
+                            Nova Conversa
+                        </button>
+                        <button class="btn btn-info" onclick="showQuickStats()">
+                            <i class="fas fa-chart-bar me-2"></i>
+                            Ver Estatísticas
+                        </button>
+                        <button class="btn btn-warning" id="adminButton" style="display: none;" onclick="window.location.href='/admin'">
+                            <i class="fas fa-shield-alt me-2"></i>
+                            Painel Admin
+                        </button>
+                    </div>
+                </div>
+            </div>
+
+            <!-- Contatos Recentes -->
+            <div class="card mt-3">
+                <div class="card-header">
+                    <h6 class="mb-0">
+                        <i class="fas fa-user-friends me-2"></i>
+                        Contatos Recentes
+                    </h6>
+                </div>
+                <div class="card-body">
+                    <div id="recentContacts">
+                        <div class="loading text-center py-2">
+                            <div class="spinner-border spinner-border-sm" role="status"></div>
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <!-- Gráficos (se admin) -->
+    <div class="row" id="chartsSection" style="display: none;">
+        <div class="col-lg-6 mb-4">
+            <div class="card">
+                <div class="card-header">
+                    <h5 class="mb-0">
+                        <i class="fas fa-chart-pie me-2"></i>
+                        Distribuição por Usuário
+                    </h5>
+                </div>
+                <div class="card-body">
+                    <canvas id="userChart" width="400" height="200"></canvas>
+                </div>
+            </div>
+        </div>
+        
+        <div class="col-lg-6 mb-4">
+            <div class="card">
+                <div class="card-header">
+                    <h5 class="mb-0">
+                        <i class="fas fa-chart-line me-2"></i>
+                        Atividade por Dia
+                    </h5>
+                </div>
+                <div class="card-body">
+                    <canvas id="activityChart" width="400" height="200"></canvas>
+                </div>
+            </div>
+        </div>
+    </div>
+</div>
+
+<!-- Modal de Estatísticas -->
+<div class="modal fade" id="statsModal" tabindex="-1">
+    <div class="modal-dialog modal-lg">
+        <div class="modal-content">
+            <div class="modal-header">
+                <h5 class="modal-title">
+                    <i class="fas fa-chart-bar me-2"></i>
+                    Estatísticas Detalhadas
+                </h5>
+                <button type="button" class="btn-close" data-bs-dismiss="modal"></button>
+            </div>
+            <div class="modal-body">
+                <div class="row">
+                    <div class="col-md-6 mb-3">
+                        <div class="card bg-primary text-white">
+                            <div class="card-body text-center">
+                                <h3 id="modalTotalContacts">0</h3>
+                                <p class="mb-0">Total de Contatos</p>
+                            </div>
+                        </div>
+                    </div>
+                    <div class="col-md-6 mb-3">
+                        <div class="card bg-success text-white">
+                            <div class="card-body text-center">
+                                <h3 id="modalTotalChats">0</h3>
+                                <p class="mb-0">Total de Conversas</p>
+                            </div>
+                        </div>
+                    </div>
+                    <div class="col-md-6 mb-3">
+                        <div class="card bg-info text-white">
+                            <div class="card-body text-center">
+                                <h3 id="modalTotalMessages">0</h3>
+                                <p class="mb-0">Total de Mensagens</p>
+                            </div>
+                        </div>
+                    </div>
+                    <div class="col-md-6 mb-3">
+                        <div class="card bg-warning text-white">
+                            <div class="card-body text-center">
+                                <h3 id="modalAvgMessages">0</h3>
+                                <p class="mb-0">Média de Mensagens por Chat</p>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+            </div>
+            <div class="modal-footer">
+                <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">Fechar</button>
+            </div>
+        </div>
+    </div>
+</div>
+{% endblock %}
+
+{% block extra_js %}
+<script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
+<script>
+    let userChart = null;
+    let activityChart = null;
+
+    // Carregar dashboard ao inicializar
+    document.addEventListener('DOMContentLoaded', function() {
+        loadDashboard();
+    });
+
+    // Carregar dados do dashboard
+    async function loadDashboard() {
+        try {
+            showLoading();
+            
+            // Carregar estatísticas
+            await loadStats();
+            
+            // Carregar atividade recente
+            await loadRecentActivity();
+            
+            // Carregar contatos recentes
+            await loadRecentContacts();
+            
+            // Se for admin, carregar dados adicionais
+            if (currentUser && currentUser.role === 'admin') {
+                document.getElementById('usersCard').style.display = 'block';
+                document.getElementById('adminButton').style.display = 'block';
+                document.getElementById('chartsSection').style.display = 'flex';
+                await loadAdminStats();
+                await loadCharts();
+            }
+            
+            hideLoading();
+        } catch (error) {
+            console.error('Erro ao carregar dashboard:', error);
+            hideLoading();
+            showAlert('Erro ao carregar dashboard', 'danger');
+        }
+    }
+
+    // Carregar estatísticas básicas
+    async function loadStats() {
+        try {
+            const response = await fetchWithAuth('/api/dashboard/stats');
+            const data = await response.json();
+            
+            if (response.ok) {
+                document.getElementById('totalContacts').textContent = data.total_contacts || 0;
+                document.getElementById('totalChats').textContent = data.total_chats || 0;
+                document.getElementById('totalMessages').textContent = data.total_messages || 0;
+            }
+        } catch (error) {
+            console.error('Erro ao carregar estatísticas:', error);
+        }
+    }
+
+    // Carregar estatísticas de admin
+    async function loadAdminStats() {
+        try {
+            const response = await fetchWithAuth('/api/admin/stats');
+            const data = await response.json();
+            
+            if (response.ok) {
+                document.getElementById('totalUsers').textContent = data.total_users || 0;
+            }
+        } catch (error) {
+            console.error('Erro ao carregar estatísticas de admin:', error);
+        }
+    }
+
+    // Carregar atividade recente
+    async function loadRecentActivity() {
+        try {
+            const response = await fetchWithAuth('/api/dashboard/recent-activity');
+            const data = await response.json();
+            
+            const container = document.getElementById('recentActivity');
+            
+            if (response.ok && data.length > 0) {
+                container.innerHTML = data.map(activity => `
+                    <div class="d-flex align-items-center mb-3 p-3 bg-light rounded">
+                        <div class="me-3">
+                            <i class="fas ${getActivityIcon(activity.type)} text-primary"></i>
+                        </div>
+                        <div class="flex-grow-1">
+                            <h6 class="mb-1">${activity.title}</h6>
+                            <p class="mb-0 text-muted small">${activity.description}</p>
+                        </div>
+                        <div class="text-muted small">
+                            ${formatDate(activity.timestamp)}
+                        </div>
+                    </div>
+                `).join('');
+            } else {
+                container.innerHTML = `
+                    <div class="text-center py-4">
+                        <i class="fas fa-inbox fa-3x text-muted mb-3"></i>
+                        <p class="text-muted">Nenhuma atividade recente</p>
+                    </div>
+                `;
+            }
+        } catch (error) {
+            console.error('Erro ao carregar atividade recente:', error);
+            document.getElementById('recentActivity').innerHTML = `
+                <div class="text-center py-4">
+                    <p class="text-danger">Erro ao carregar atividade</p>
+                </div>
+            `;
+        }
+    }
+
+    // Carregar contatos recentes
+    async function loadRecentContacts() {
+        try {
+            const response = await fetchWithAuth('/api/contacts?limit=5');
+            const data = await response.json();
+            
+            const container = document.getElementById('recentContacts');
+            
+            if (response.ok && data.length > 0) {
+                container.innerHTML = data.map(contact => `
+                    <div class="d-flex align-items-center mb-2">
+                        <div class="me-2">
+                            <div class="bg-primary rounded-circle d-flex align-items-center justify-content-center" style="width: 32px; height: 32px;">
+                                <i class="fas fa-user text-white small"></i>
+                            </div>
+                        </div>
+                        <div class="flex-grow-1">
+                            <div class="fw-bold small">${contact.nome}</div>
+                            <div class="text-muted small">${contact.telefone || contact.email || ''}</div>
+                        </div>
+                    </div>
+                `).join('');
+            } else {
+                container.innerHTML = `
+                    <div class="text-center py-3">
+                        <p class="text-muted small mb-0">Nenhum contato ainda</p>
+                    </div>
+                `;
+            }
+        } catch (error) {
+            console.error('Erro ao carregar contatos recentes:', error);
+        }
+    }
+
+    // Carregar gráficos (admin)
+    async function loadCharts() {
+        try {
+            const response = await fetchWithAuth('/api/admin/charts-data');
+            const data = await response.json();
+            
+            if (response.ok) {
+                createUserChart(data.users_data);
+                createActivityChart(data.activity_data);
+            }
+        } catch (error) {
+            console.error('Erro ao carregar dados dos gráficos:', error);
+        }
+    }
+
+    // Criar gráfico de usuários
+    function createUserChart(data) {
+        const ctx = document.getElementById('userChart').getContext('2d');
+        
+        if (userChart) {
+            userChart.destroy();
+        }
+        
+        userChart = new Chart(ctx, {
+            type: 'doughnut',
+            data: {
+                labels: data.labels || ['Admin', 'Manager', 'User'],
+                datasets: [{
+                    data: data.values || [1, 0, 0],
+                    backgroundColor: [
+                        '#FF6384',
+                        '#36A2EB',
+                        '#FFCE56'
+                    ]
+                }]
+            },
+            options: {
+                responsive: true,
+                maintainAspectRatio: false,
+                plugins: {
+                    legend: {
+                        position: 'bottom'
+                    }
+                }
+            }
+        });
+    }
+
+    // Criar gráfico de atividade
+    function createActivityChart(data) {
+        const ctx = document.getElementById('activityChart').getContext('2d');
+        
+        if (activityChart) {
+            activityChart.destroy();
+        }
+        
+        activityChart = new Chart(ctx, {
+            type: 'line',
+            data: {
+                labels: data.labels || ['Seg', 'Ter', 'Qua', 'Qui', 'Sex', 'Sáb', 'Dom'],
+                datasets: [{
+                    label: 'Mensagens',
+                    data: data.values || [0, 0, 0, 0, 0, 0, 0],
+                    borderColor: '#667eea',
+                    backgroundColor: 'rgba(102, 126, 234, 0.1)',
+                    tension: 0.4
+                }]
+            },
+            options: {
+                responsive: true,
+                maintainAspectRatio: false,
+                scales: {
+                    y: {
+                        beginAtZero: true
+                    }
+                }
+            }
+        });
+    }
+
+    // Obter ícone da atividade
+    function getActivityIcon(type) {
+        const icons = {
+            'contact': 'fa-user-plus',
+            'chat': 'fa-comment-dots',
+            'message': 'fa-envelope',
+            'user': 'fa-user-shield'
+        };
+        return icons[type] || 'fa-info-circle';
+    }
+
+    // Mostrar estatísticas detalhadas
+    function showQuickStats() {
+        // Atualizar modal com dados atuais
+        document.getElementById('modalTotalContacts').textContent = 
+            document.getElementById('totalContacts').textContent;
+        document.getElementById('modalTotalChats').textContent = 
+            document.getElementById('totalChats').textContent;
+        document.getElementById('modalTotalMessages').textContent = 
+            document.getElementById('totalMessages').textContent;
+        
+        // Calcular média de mensagens por chat
+        const totalChats = parseInt(document.getElementById('totalChats').textContent) || 1;
+        const totalMessages = parseInt(document.getElementById('totalMessages').textContent) || 0;
+        const avgMessages = Math.round(totalMessages / totalChats) || 0;
+        document.getElementById('modalAvgMessages').textContent = avgMessages;
+        
+        new bootstrap.Modal(document.getElementById('statsModal')).show();
+    }
+
+    // Atualizar dashboard
+    function refreshDashboard() {
+        showAlert('Atualizando dashboard...', 'info');
+        loadDashboard();
+    }
+
+    // Adicionar endpoint de verificação de auth para o template base
+    window.addEventListener('load', function() {
+        // Sobrescrever a função checkAuth para incluir endpoint de verificação
+        const originalCheckAuth = window.checkAuth;
+        
+        window.checkAuth = function() {
+            if (!authToken) {
+                if (!window.location.pathname.includes('/login') && !window.location.pathname.includes('/register')) {
+                    window.location.href = '/login';
+                }
+                return;
+            }
+
+            // Usar dados do localStorage temporariamente
+            const storedUser = localStorage.getItem('currentUser');
+            if (storedUser) {
+                currentUser = JSON.parse(storedUser);
+                updateUserInterface();
+            }
+        };
+    });
+</script>
+{% endblock %}

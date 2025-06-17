@@ -1,0 +1,461 @@
+{% extends "base.html" %}
+
+{% block title %}Contatos - Sistema de Gestão{% endblock %}
+
+{% block content %}
+<div class="fade-in">
+    <!-- Header -->
+    <div class="d-flex justify-content-between align-items-center mb-4">
+        <div>
+            <h1 class="h3 mb-0">Contatos</h1>
+            <p class="text-muted">Gerencie seus contatos</p>
+        </div>
+        <div>
+            <button class="btn btn-primary" onclick="showAddContactModal()">
+                <i class="fas fa-plus me-2"></i>
+                Novo Contato
+            </button>
+        </div>
+    </div>
+
+    <!-- Filtros e Busca -->
+    <div class="card mb-4">
+        <div class="card-body">
+            <div class="row">
+                <div class="col-md-6 mb-3">
+                    <div class="input-group">
+                        <span class="input-group-text">
+                            <i class="fas fa-search"></i>
+                        </span>
+                        <input type="text" class="form-control" id="searchInput" placeholder="Buscar contatos...">
+                    </div>
+                </div>
+                <div class="col-md-3 mb-3">
+                    <select class="form-select" id="sortBy">
+                        <option value="nome">Ordenar por Nome</option>
+                        <option value="data_criacao">Ordenar por Data</option>
+                        <option value="email">Ordenar por Email</option>
+                    </select>
+                </div>
+                <div class="col-md-3 mb-3">
+                    <button class="btn btn-outline-secondary w-100" onclick="clearFilters()">
+                        <i class="fas fa-eraser me-2"></i>
+                        Limpar Filtros
+                    </button>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <!-- Lista de Contatos -->
+    <div class="card">
+        <div class="card-header d-flex justify-content-between align-items-center">
+            <h5 class="mb-0">
+                <i class="fas fa-address-book me-2"></i>
+                Meus Contatos
+            </h5>
+            <span class="badge bg-primary" id="contactCount">0</span>
+        </div>
+        <div class="card-body">
+            <div id="contactsContainer">
+                <div class="loading text-center py-4">
+                    <div class="spinner-border" role="status">
+                        <span class="visually-hidden">Carregando...</span>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
+</div>
+
+<!-- Modal Adicionar/Editar Contato -->
+<div class="modal fade" id="contactModal" tabindex="-1">
+    <div class="modal-dialog">
+        <div class="modal-content">
+            <div class="modal-header">
+                <h5 class="modal-title" id="contactModalTitle">
+                    <i class="fas fa-user-plus me-2"></i>
+                    Novo Contato
+                </h5>
+                <button type="button" class="btn-close" data-bs-dismiss="modal"></button>
+            </div>
+            <div class="modal-body">
+                <form id="contactForm">
+                    <input type="hidden" id="contactId">
+                    <div class="mb-3">
+                        <label for="contactName" class="form-label">Nome *</label>
+                        <input type="text" class="form-control" id="contactName" required>
+                    </div>
+                    <div class="mb-3">
+                        <label for="contactPhone" class="form-label">Telefone</label>
+                        <input type="tel" class="form-control" id="contactPhone" placeholder="(11) 99999-9999">
+                    </div>
+                    <div class="mb-3">
+                        <label for="contactEmail" class="form-label">Email</label>
+                        <input type="email" class="form-control" id="contactEmail">
+                    </div>
+                    <div class="mb-3">
+                        <label for="contactNotes" class="form-label">Observações</label>
+                        <textarea class="form-control" id="contactNotes" rows="3"></textarea>
+                    </div>
+                </form>
+            </div>
+            <div class="modal-footer">
+                <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">Cancelar</button>
+                <button type="button" class="btn btn-primary" onclick="saveContact()">
+                    <i class="fas fa-save me-2"></i>
+                    Salvar
+                </button>
+            </div>
+        </div>
+    </div>
+</div>
+
+<!-- Modal Confirmar Exclusão -->
+<div class="modal fade" id="deleteModal" tabindex="-1">
+    <div class="modal-dialog">
+        <div class="modal-content">
+            <div class="modal-header bg-danger text-white">
+                <h5 class="modal-title">
+                    <i class="fas fa-trash me-2"></i>
+                    Confirmar Exclusão
+                </h5>
+                <button type="button" class="btn-close btn-close-white" data-bs-dismiss="modal"></button>
+            </div>
+            <div class="modal-body">
+                <p>Tem certeza que deseja excluir este contato?</p>
+                <p class="text-muted mb-0">Esta ação não pode ser desfeita.</p>
+            </div>
+            <div class="modal-footer">
+                <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">Cancelar</button>
+                <button type="button" class="btn btn-danger" onclick="confirmDelete()">
+                    <i class="fas fa-trash me-2"></i>
+                    Excluir
+                </button>
+            </div>
+        </div>
+    </div>
+</div>
+{% endblock %}
+
+{% block extra_js %}
+<script>
+    let contacts = [];
+    let filteredContacts = [];
+    let deleteContactId = null;
+    let editingContact = null;
+
+    // Carregar contatos ao inicializar
+    document.addEventListener('DOMContentLoaded', function() {
+        loadContacts();
+        setupEventListeners();
+    });
+
+    // Configurar event listeners
+    function setupEventListeners() {
+        // Busca em tempo real
+        document.getElementById('searchInput').addEventListener('input', function() {
+            filterContacts();
+        });
+
+        // Ordenação
+        document.getElementById('sortBy').addEventListener('change', function() {
+            filterContacts();
+        });
+
+        // Máscara para telefone
+        document.getElementById('contactPhone').addEventListener('input', function(e) {
+            let value = e.target.value.replace(/\D/g, '');
+            if (value.length <= 11) {
+                value = value.replace(/(\d{2})(\d{5})(\d{4})/, '($1) $2-$3');
+                if (value.length < 14) {
+                    value = value.replace(/(\d{2})(\d{4})(\d{4})/, '($1) $2-$3');
+                }
+</script>
+{% endblock %}            }
+            e.target.value = value;
+        });
+    }
+
+    // Carregar contatos
+    async function loadContacts() {
+        try {
+            showLoading();
+            const response = await fetchWithAuth('/api/contacts');
+
+            if (response.ok) {
+                contacts = await response.json();
+                filteredContacts = [...contacts];
+                renderContacts();
+                updateContactCount();
+            } else {
+                throw new Error('Erro ao carregar contatos');
+            }
+
+            hideLoading();
+        } catch (error) {
+            console.error('Erro:', error);
+            hideLoading();
+            showAlert('Erro ao carregar contatos', 'danger');
+        }
+    }
+
+    // Filtrar contatos
+    function filterContacts() {
+        const searchTerm = document.getElementById('searchInput').value.toLowerCase();
+        const sortBy = document.getElementById('sortBy').value;
+
+        // Filtrar por busca
+        filteredContacts = contacts.filter(contact => {
+            return contact.nome.toLowerCase().includes(searchTerm) ||
+                   (contact.email && contact.email.toLowerCase().includes(searchTerm)) ||
+                   (contact.telefone && contact.telefone.includes(searchTerm)) ||
+                   (contact.observacoes && contact.observacoes.toLowerCase().includes(searchTerm));
+        });
+
+        // Ordenar
+        filteredContacts.sort((a, b) => {
+            switch (sortBy) {
+                case 'nome':
+                    return a.nome.localeCompare(b.nome);
+                case 'email':
+                    return (a.email || '').localeCompare(b.email || '');
+                case 'data_criacao':
+                    return new Date(b.data_criacao) - new Date(a.data_criacao);
+                default:
+                    return 0;
+            }
+        });
+
+        renderContacts();
+        updateContactCount();
+    }
+
+    // Renderizar contatos
+    function renderContacts() {
+        const container = document.getElementById('contactsContainer');
+
+        if (filteredContacts.length === 0) {
+            container.innerHTML = `
+                <div class="text-center py-5">
+                    <i class="fas fa-address-book fa-3x text-muted mb-3"></i>
+                    <h5>Nenhum contato encontrado</h5>
+                    <p class="text-muted">Adicione seu primeiro contato clicando no botão "Novo Contato"</p>
+                </div>
+            `;
+            return;
+        }
+
+        container.innerHTML = `
+            <div class="row">
+                ${filteredContacts.map(contact => `
+                    <div class="col-lg-4 col-md-6 mb-3">
+                        <div class="card h-100 contact-card" style="transition: transform 0.2s;">
+                            <div class="card-body">
+                                <div class="d-flex align-items-start mb-3">
+                                    <div class="me-3">
+                                        <div class="bg-primary rounded-circle d-flex align-items-center justify-content-center" style="width: 50px; height: 50px;">
+                                            <i class="fas fa-user text-white"></i>
+                                        </div>
+                                    </div>
+                                    <div class="flex-grow-1">
+                                        <h6 class="mb-1">${contact.nome}</h6>
+                                        <small class="text-muted">
+                                            Criado em ${formatDate(contact.data_criacao)}
+                                        </small>
+                                    </div>
+                                    <div class="dropdown">
+                                        <button class="btn btn-sm btn-outline-secondary" type="button" data-bs-toggle="dropdown">
+                                            <i class="fas fa-ellipsis-v"></i>
+                                        </button>
+                                        <ul class="dropdown-menu">
+                                            <li><a class="dropdown-item" href="#" onclick="editContact(${contact.id})">
+                                                <i class="fas fa-edit me-2"></i>Editar
+                                            </a></li>
+                                            <li><a class="dropdown-item" href="#" onclick="startChat(${contact.id})">
+                                                <i class="fas fa-comment-dots me-2"></i>Nova Conversa
+                                            </a></li>
+                                            <li><hr class="dropdown-divider"></li>
+                                            <li><a class="dropdown-item text-danger" href="#" onclick="showDeleteModal(${contact.id})">
+                                                <i class="fas fa-trash me-2"></i>Excluir
+                                            </a></li>
+                                        </ul>
+                                    </div>
+                                </div>
+
+                                <div class="contact-info">
+                                    ${contact.telefone ? `
+                                        <div class="mb-2">
+                                            <i class="fas fa-phone text-primary me-2"></i>
+                                            <span>${contact.telefone}</span>
+                                        </div>
+                                    ` : ''}
+
+                                    ${contact.email ? `
+                                        <div class="mb-2">
+                                            <i class="fas fa-envelope text-primary me-2"></i>
+                                            <span>${contact.email}</span>
+                                        </div>
+                                    ` : ''}
+
+                                    ${contact.observacoes ? `
+                                        <div class="mb-2">
+                                            <i class="fas fa-sticky-note text-primary me-2"></i>
+                                            <span class="text-muted">${truncateText(contact.observacoes, 60)}</span>
+                                        </div>
+                                    ` : ''}
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+                `).join('')}
+            </div>
+        `;
+
+        // Adicionar efeito hover
+        document.querySelectorAll('.contact-card').forEach(card => {
+            card.addEventListener('mouseenter', function() {
+                this.style.transform = 'translateY(-5px)';
+                this.style.boxShadow = '0 10px 25px rgba(0,0,0,0.15)';
+            });
+
+            card.addEventListener('mouseleave', function() {
+                this.style.transform = 'translateY(0)';
+                this.style.boxShadow = '';
+            });
+        });
+    }
+
+    // Atualizar contador de contatos
+    function updateContactCount() {
+        document.getElementById('contactCount').textContent = filteredContacts.length;
+    }
+
+    // Mostrar modal de adicionar contato
+    function showAddContactModal() {
+        editingContact = null;
+        document.getElementById('contactModalTitle').innerHTML = '<i class="fas fa-user-plus me-2"></i>Novo Contato';
+        document.getElementById('contactForm').reset();
+        document.getElementById('contactId').value = '';
+        new bootstrap.Modal(document.getElementById('contactModal')).show();
+    }
+
+    // Editar contato
+    function editContact(contactId) {
+        editingContact = contacts.find(c => c.id === contactId);
+        if (editingContact) {
+            document.getElementById('contactModalTitle').innerHTML = '<i class="fas fa-user-edit me-2"></i>Editar Contato';
+            document.getElementById('contactId').value = editingContact.id;
+            document.getElementById('contactName').value = editingContact.nome;
+            document.getElementById('contactPhone').value = editingContact.telefone || '';
+            document.getElementById('contactEmail').value = editingContact.email || '';
+            document.getElementById('contactNotes').value = editingContact.observacoes || '';
+            new bootstrap.Modal(document.getElementById('contactModal')).show();
+        }
+    }
+
+    // Salvar contato
+    async function saveContact() {
+        const id = document.getElementById('contactId').value;
+        const nome = document.getElementById('contactName').value.trim();
+        const telefone = document.getElementById('contactPhone').value.trim();
+        const email = document.getElementById('contactEmail').value.trim();
+        const observacoes = document.getElementById('contactNotes').value.trim();
+
+        if (!nome) {
+            showAlert('Nome é obrigatório', 'warning');
+            return;
+        }
+
+        const contactData = {
+            nome,
+            telefone: telefone || null,
+            email: email || null,
+            observacoes: observacoes || null
+        };
+
+        try {
+            showLoading();
+
+            let response;
+            if (id) {
+                // Editar
+                response = await fetchWithAuth(`/api/contacts/${id}`, {
+                    method: 'PUT',
+                    body: JSON.stringify(contactData)
+                });
+            } else {
+                // Criar
+                response = await fetchWithAuth('/api/contacts', {
+                    method: 'POST',
+                    body: JSON.stringify(contactData)
+                });
+            }
+
+            if (response.ok) {
+                showAlert(id ? 'Contato atualizado com sucesso!' : 'Contato criado com sucesso!', 'success');
+                bootstrap.Modal.getInstance(document.getElementById('contactModal')).hide();
+                await loadContacts();
+            } else {
+                const error = await response.json();
+                throw new Error(error.detail || 'Erro ao salvar contato');
+            }
+
+            hideLoading();
+        } catch (error) {
+            console.error('Erro:', error);
+            hideLoading();
+            showAlert('Erro ao salvar contato: ' + error.message, 'danger');
+        }
+    }
+
+    // Mostrar modal de exclusão
+    function showDeleteModal(contactId) {
+        deleteContactId = contactId;
+        new bootstrap.Modal(document.getElementById('deleteModal')).show();
+    }
+
+    // Confirmar exclusão
+    async function confirmDelete() {
+        if (!deleteContactId) return;
+
+        try {
+            showLoading();
+
+            const response = await fetchWithAuth(`/api/contacts/${deleteContactId}`, {
+                method: 'DELETE'
+            });
+
+            if (response.ok) {
+                showAlert('Contato excluído com sucesso!', 'success');
+                bootstrap.Modal.getInstance(document.getElementById('deleteModal')).hide();
+                await loadContacts();
+            } else {
+                throw new Error('Erro ao excluir contato');
+            }
+
+            hideLoading();
+        } catch (error) {
+            console.error('Erro:', error);
+            hideLoading();
+            showAlert('Erro ao excluir contato', 'danger');
+        }
+
+        deleteContactId = null;
+    }
+
+    // Iniciar conversa com contato
+    function startChat(contactId) {
+        const contact = contacts.find(c => c.id === contactId);
+        if (contact) {
+            // Redirecionar para página de chats com o contato selecionado
+            window.location.href = `/chats?contact=${contactId}&name=${encodeURIComponent(contact.nome)}`;
+        }
+    }
+
+    // Limpar filtros
+    function clearFilters() {
+        document.getElementById('searchInput').value = '';
+        document.getElementById('sortBy').value = 'nome';
+        filterContacts();
+    }
