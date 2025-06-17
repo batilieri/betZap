@@ -24,6 +24,39 @@ except ImportError:
     DB_AVAILABLE = False
 
 
+def _message_belongs_to_chat_strict(msg: Dict, chat_id: str) -> bool:
+    """
+    NOVO: Verificação rigorosa de pertencimento ao chat específico
+    """
+    try:
+        is_group = msg.get('isGroup', False)
+        from_me = msg.get('fromMe', False)
+
+        if is_group:
+            # Para grupos: deve ser exatamente o mesmo ID do grupo
+            msg_chat_id = msg.get('chat', {}).get('id', '')
+            return msg_chat_id == chat_id
+        else:
+            # Para conversas individuais: verificar ambos os lados
+            msg_sender_id = msg.get('sender', {}).get('id', '')
+            msg_chat_id = msg.get('chat', {}).get('id', '')
+
+            # A mensagem pertence ao chat se:
+            # 1. Foi enviada POR este contato (sender_id == chat_id)
+            # 2. Foi enviada PARA este contato (chat_id == nosso_id e from_me=True)
+
+            if from_me:
+                # Mensagem enviada por mim - verificar destinatário
+                return msg_chat_id == chat_id
+            else:
+                # Mensagem recebida - verificar remetente
+                return msg_sender_id == chat_id
+
+    except Exception as e:
+        print(f"⚠️ Erro na verificação strict: {e}")
+        return False
+
+
 class ChatDatabaseInterface:
     """Interface OTIMIZADA com carregamento incremental - SEM RECARREGAMENTO TOTAL"""
 
@@ -109,7 +142,7 @@ class ChatDatabaseInterface:
         return self.db_manager is not None
 
     def get_chats_list(self, limit: int = 50) -> List[Dict]:
-        """Retorna lista de chats otimizada"""
+        """CORRIGIDO: Retorna lista de chats preservando profile_picture"""
         if not self.is_connected():
             return []
 
@@ -133,13 +166,19 @@ class ChatDatabaseInterface:
                         chat_id = msg.get('chat', {}).get('id', '')
                         chat_name = self._extract_group_name(msg)
                         chat_type = 'group'
+                        # CORREÇÃO: Para grupos, pegar foto do grupo
+                        profile_picture = msg.get('chat', {}).get('profilePicture', '')
                     else:
                         if from_me:
                             chat_id = msg.get('chat', {}).get('id', '')
                             chat_name = self.get_contact_name(chat_id)
+                            # CORREÇÃO: Para mensagens enviadas, pegar foto do destinatário
+                            profile_picture = msg.get('chat', {}).get('profilePicture', '')
                         else:
                             chat_id = msg.get('sender', {}).get('id', '')
                             chat_name = msg.get('sender', {}).get('pushName', '') or self.get_contact_name(chat_id)
+                            # CORREÇÃO: Para mensagens recebidas, pegar foto do remetente
+                            profile_picture = msg.get('sender', {}).get('profilePicture', '')
 
                         chat_type = 'individual'
 
@@ -167,7 +206,9 @@ class ChatDatabaseInterface:
                             'message_count': 0,
                             'is_group': is_group,
                             'unread_count': 0,
-                            'profile_picture': msg.get('sender', {}).get('profilePicture', '') if not from_me else '',
+                            # CORREÇÃO: Sempre preservar a URL da imagem mais recente
+                            'profile_picture': profile_picture or unique_chats.get(chat_id, {}).get('profile_picture',
+                                                                                                    ''),
                             'participants_count': 1 if chat_type == 'individual' else 0,
                             'is_business': bool(msg.get('sender', {}).get('verifiedBizName', '')),
                             'business_name': msg.get('sender', {}).get('verifiedBizName', '')
@@ -202,86 +243,69 @@ class ChatDatabaseInterface:
 
     def get_chat_messages_initial(self, chat_id: str, limit: int = 30) -> List[Dict]:
         """
-        NOVO: Carrega mensagens iniciais do chat (primeira vez)
-        Retorna apenas mensagens mais recentes para carregamento inicial
+        CORRIGIDO: Carrega mensagens APENAS do contato específico
         """
         if not self.is_connected():
             return []
 
         try:
-            print(f"📨 Carregamento INICIAL: {limit} mensagens do chat: {chat_id[:15]}")
+            print(f"📨 Carregamento INICIAL isolado: {limit} mensagens do chat: {chat_id[:15]}")
 
             all_messages = self.db_manager.get_recent_messages(3000)
             if not all_messages:
                 return []
 
-            # Determinar se é grupo
-            is_group = self._detect_if_group(chat_id, all_messages)
+            # CORREÇÃO: Filtro rigoroso por contato específico
+            chat_messages = []
+            for msg in all_messages:
+                # Verificar se a mensagem pertence EXATAMENTE a este chat
+                if _message_belongs_to_chat_strict(msg, chat_id):
+                    processed_msg = self._process_message_for_chat(msg)
+                    if processed_msg and processed_msg['timestamp'] > 0:
+                        chat_messages.append(processed_msg)
 
-            # Filtrar e processar mensagens do chat
-            chat_messages = self._filter_and_process_messages(chat_id, all_messages, is_group)
-
-            # Ordenar cronologicamente
+            # Ordenar e remover duplicatas
             chat_messages.sort(key=lambda x: (x['timestamp'], x.get('message_id', '')))
-
-            # Remover duplicatas
             unique_messages = self._remove_duplicates(chat_messages)
 
-            # Cache inicial - apenas IDs das mensagens carregadas
+            # Cache isolado por chat
             self._loaded_messages_cache[chat_id] = {
                 msg.get('message_id', f"temp_{msg['timestamp']}"): msg
                 for msg in unique_messages
             }
 
-            # Armazenar último timestamp
             if unique_messages:
                 self._last_message_timestamps[chat_id] = max(msg['timestamp'] for msg in unique_messages)
 
-            # Retornar apenas as mais recentes até o limite
-            if len(unique_messages) <= limit:
-                result = unique_messages
-            else:
-                result = unique_messages[-limit:]
-
-            print(f"✅ Carregamento inicial: {len(result)} mensagens")
+            result = unique_messages[-limit:] if len(unique_messages) > limit else unique_messages
+            print(f"✅ Isolamento OK: {len(result)} mensagens do contato {chat_id[:15]}")
             return result
 
         except Exception as e:
-            print(f"❌ Erro no carregamento inicial: {e}")
+            print(f"❌ Erro no carregamento isolado: {e}")
             return []
 
     def get_new_messages_incremental(self, chat_id: str) -> List[Dict]:
-        """
-        NOVO: Busca apenas NOVAS mensagens desde o último carregamento
-        Retorna lista vazia se não há novas mensagens
-        """
+        """SIMPLIFICADO: Buscar todas as mensagens novas sem filtros complexos"""
         if not self.is_connected():
             return []
 
         try:
-            # Verificar se temos cache para este chat
             if chat_id not in self._loaded_messages_cache:
-                print(f"⚠️ Cache não encontrado para {chat_id}, fazendo carregamento inicial")
                 return self.get_chat_messages_initial(chat_id)
 
             last_timestamp = self._last_message_timestamps.get(chat_id, 0)
+            print(f"🔍 Verificação incremental para {chat_id[:15]} após {last_timestamp}")
 
-            print(f"🔍 Verificando novas mensagens para {chat_id[:15]} após {last_timestamp}")
-
-            # Buscar mensagens recentes
             all_messages = self.db_manager.get_recent_messages(1000)
             if not all_messages:
                 return []
 
-            # Determinar se é grupo
-            is_group = self._detect_if_group(chat_id, all_messages)
-
-            # Filtrar mensagens do chat que são NOVAS (timestamp > último conhecido)
             new_messages = []
             known_message_ids = set(self._loaded_messages_cache[chat_id].keys())
 
             for msg in all_messages:
-                if not self._message_belongs_to_chat(msg, chat_id, is_group):
+                if not _message_belongs_to_chat_strict(msg, chat_id):
                     continue
 
                 processed_msg = self._process_message_for_chat(msg)
@@ -289,23 +313,19 @@ class ChatDatabaseInterface:
                     continue
 
                 msg_id = processed_msg.get('message_id', f"temp_{processed_msg['timestamp']}")
-
-                # Verificar se é realmente uma mensagem nova
                 if msg_id not in known_message_ids:
                     new_messages.append(processed_msg)
 
             if not new_messages:
                 return []
 
-            # Ordenar novas mensagens
+            # Ordenar e atualizar cache
             new_messages.sort(key=lambda x: (x['timestamp'], x.get('message_id', '')))
 
-            # Atualizar cache com novas mensagens
             for msg in new_messages:
                 msg_id = msg.get('message_id', f"temp_{msg['timestamp']}")
                 self._loaded_messages_cache[chat_id][msg_id] = msg
 
-            # Atualizar timestamp
             if new_messages:
                 self._last_message_timestamps[chat_id] = max(msg['timestamp'] for msg in new_messages)
 
@@ -315,6 +335,8 @@ class ChatDatabaseInterface:
         except Exception as e:
             print(f"❌ Erro na busca incremental: {e}")
             return []
+
+
 
     def get_messages_before_pagination(self, chat_id: str, before_timestamp: float, limit: int = 20) -> List[Dict]:
         """
@@ -392,10 +414,7 @@ class ChatDatabaseInterface:
         return unique_messages
 
     def process_single_new_message(self, message_data: Dict) -> Optional[Dict]:
-        """
-        NOVO: Processa uma única mensagem nova (para WebSocket/tempo real)
-        Adiciona automaticamente ao cache se for de um chat monitorado
-        """
+        """CORRIGIDO: Processa mensagem única evitando duplicatas de enviadas"""
         try:
             print(f"📨 Processando mensagem única: {message_data.get('messageId', 'N/A')}")
 
@@ -408,6 +427,10 @@ class ChatDatabaseInterface:
             chat_id = self._extract_chat_id_from_message(message_data)
             if not chat_id:
                 return None
+
+            # NOVO: Marcar se é mensagem enviada para controle de duplicatas
+            if message_data.get('fromMe', False):
+                processed_msg['_is_sent_message'] = True
 
             # Se temos cache para este chat, adicionar mensagem
             if chat_id in self._loaded_messages_cache:

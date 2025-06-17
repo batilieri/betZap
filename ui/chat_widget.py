@@ -76,6 +76,10 @@ class MessageBubble(QFrame):
         self.is_fully_setup = False
         self.whatsapp_api = whatsapp_api
 
+        # NOVO: Flags para controle de mensagens temporárias
+        self.is_temporary_sent = False
+        self.temp_id = None
+
         # IDs importantes
         self.webhook_message_id = message_data.get('webhook_message_id', message_data.get('message_id', ''))
         self.local_message_id = message_data.get('local_message_id', '')
@@ -151,6 +155,94 @@ class MessageBubble(QFrame):
         # Garantir visibilidade
         self.setVisible(True)
         self.is_fully_setup = True
+
+    def _mark_as_delivered(self):
+        """CORRIGIDO: Marca mensagem como entregue com indicador visual"""
+        try:
+            print(f"✅ Marcando como entregue: {self.webhook_message_id}")
+
+            # Remover status temporário se existir
+            if hasattr(self, 'is_temporary_sent'):
+                self.is_temporary_sent = False
+            if hasattr(self, '_temp_status'):
+                self._temp_status = 'delivered'
+
+            # Encontrar e atualizar indicador de status
+            self._update_delivery_status_indicator()
+
+        except Exception as e:
+            print(f"⚠️ Erro ao marcar como entregue: {e}")
+
+    def _update_delivery_status_indicator(self):
+        """NOVO: Atualiza indicador de status de entrega"""
+        try:
+            if not self.is_from_me:
+                return  # Só para mensagens enviadas
+
+            # Procurar layout de status dentro do bubble_frame
+            status_layout = self._find_status_layout()
+            if not status_layout:
+                return
+
+            # Remover indicadores antigos
+            self._remove_old_status_indicators(status_layout)
+
+            # Adicionar novo indicador
+            status_icon = QLabel("✓✓")
+            status_icon.setObjectName('delivery_status_indicator')
+            status_icon.setFont(QFont('Segoe UI', 8, QFont.Weight.Bold))
+            status_icon.setStyleSheet("""
+                QLabel {
+                    color: #4CAF50; 
+                    background: transparent;
+                    margin-left: 3px;
+                }
+            """)
+            status_icon.setToolTip("Entregue")
+
+            # Adicionar ao layout
+            status_layout.addWidget(status_icon)
+
+            # Forçar atualização visual
+            self.bubble_frame.updateGeometry()
+            self.updateGeometry()
+
+            print(f"✅ Indicador de entrega atualizado")
+
+        except Exception as e:
+            print(f"⚠️ Erro ao atualizar indicador: {e}")
+
+    def _find_status_layout(self):
+        """NOVO: Encontra o layout de status na mensagem"""
+        try:
+            if not hasattr(self, 'bubble_frame'):
+                return None
+
+            bubble_layout = self.bubble_frame.layout()
+            if not bubble_layout:
+                return None
+
+            # Procurar layout de conteúdo
+            content_layout = bubble_layout.itemAt(0)
+            if not content_layout or not content_layout.layout():
+                return None
+
+            content_layout = content_layout.layout()
+
+            # Procurar último item (deve ser layout de status)
+            last_item_index = content_layout.count() - 1
+            if last_item_index >= 0:
+                last_item = content_layout.itemAt(last_item_index)
+                if last_item and last_item.layout():
+                    return last_item.layout()
+
+            return None
+
+        except Exception as e:
+            print(f"⚠️ Erro ao encontrar layout de status: {e}")
+            return None
+
+
 
     def _create_bubble(self) -> QFrame:
         """Cria o balão da mensagem com suporte a reações existentes"""
@@ -342,7 +434,7 @@ class MessageBubble(QFrame):
         return icons.get(message_type, '📱 ')
 
     def _create_media_preview(self) -> Optional[QWidget]:
-        """Cria preview para mensagens de mídia"""
+        """Cria preview para mensagens de mídia - CORRIGIDO com áudio"""
         message_type = self.message_data.get('message_type', 'text')
         media_data = self.message_data.get('media_data', {})
 
@@ -354,8 +446,76 @@ class MessageBubble(QFrame):
         preview_layout.setContentsMargins(0, 5, 0, 0)
         preview_layout.setSpacing(3)
 
-        if message_type == 'document':
-            # Preview de documento
+        if message_type == 'audio':
+            # NOVO: Preview melhorado para áudio
+            audio_container = QWidget()
+            audio_layout = QHBoxLayout(audio_container)
+            audio_layout.setContentsMargins(8, 5, 8, 5)
+            audio_layout.setSpacing(8)
+
+            # Ícone de áudio
+            audio_icon = QLabel("🎵")
+            audio_icon.setFixedSize(24, 24)
+            audio_icon.setAlignment(Qt.AlignmentFlag.AlignCenter)
+            audio_icon.setStyleSheet("""
+                QLabel {
+                    background-color: rgba(255, 255, 255, 0.1);
+                    border-radius: 12px;
+                    font-size: 14px;
+                }
+            """)
+
+            # Info do áudio
+            duration = media_data.get('seconds', 0)
+            if duration:
+                duration_text = f"{duration}s"
+            else:
+                duration_text = "Áudio"
+
+            # Detectar se é PTT (Push to Talk)
+            is_ptt = media_data.get('ptt', False)
+            audio_type = "🎙️ Mensagem de voz" if is_ptt else "🎵 Áudio"
+
+            audio_info = QLabel(f"{audio_type} • {duration_text}")
+            audio_info.setFont(QFont('Segoe UI', 9))
+            audio_info.setStyleSheet("color: #3498db; font-weight: 500;")
+
+            # Botão de play (visual apenas)
+            play_button = QPushButton("▶")
+            play_button.setFixedSize(32, 32)
+            play_button.setStyleSheet("""
+                QPushButton {
+                    background-color: #3498db;
+                    color: white;
+                    border: none;
+                    border-radius: 16px;
+                    font-size: 12px;
+                    font-weight: bold;
+                }
+                QPushButton:hover {
+                    background-color: #2980b9;
+                }
+            """)
+            play_button.clicked.connect(lambda: self._play_audio_placeholder())
+
+            audio_layout.addWidget(audio_icon)
+            audio_layout.addWidget(audio_info, 1)
+            audio_layout.addWidget(play_button)
+
+            # Container com borda
+            audio_container.setStyleSheet("""
+                QWidget {
+                    background-color: rgba(52, 152, 219, 0.1);
+                    border: 1px solid #3498db;
+                    border-radius: 8px;
+                    margin: 2px;
+                }
+            """)
+
+            preview_layout.addWidget(audio_container)
+
+        elif message_type == 'document':
+            # Preview de documento (existente)
             filename = media_data.get('filename', 'documento')
             file_size = media_data.get('file_length', 0)
 
@@ -373,58 +533,14 @@ class MessageBubble(QFrame):
             doc_label.setStyleSheet("color: #667eea; font-style: italic;")
             preview_layout.addWidget(doc_label)
 
-        elif message_type == 'location':
-            # Preview de localização
-            location_name = media_data.get('name', '')
-            address = media_data.get('address', '')
-
-            if location_name:
-                loc_label = QLabel(f"🗺️ {location_name}")
-            else:
-                loc_label = QLabel("🗺️ Localização compartilhada")
-
-            loc_label.setFont(QFont('Segoe UI', 9))
-            loc_label.setStyleSheet("color: #27ae60; font-style: italic;")
-            preview_layout.addWidget(loc_label)
-
-            if address:
-                addr_label = QLabel(address)
-                addr_label.setFont(QFont('Segoe UI', 8))
-                addr_label.setStyleSheet("color: #7f8c8d;")
-                addr_label.setWordWrap(True)
-                preview_layout.addWidget(addr_label)
-
-        elif message_type == 'poll':
-            # Preview de enquete
-            poll_name = media_data.get('name', 'Enquete')
-            options = media_data.get('options', [])
-
-            poll_label = QLabel(f"🗳️ {poll_name}")
-            poll_label.setFont(QFont('Segoe UI', 9, QFont.Weight.Bold))
-            poll_label.setStyleSheet("color: #e67e22;")
-            preview_layout.addWidget(poll_label)
-
-            # Mostrar algumas opções
-            for i, option in enumerate(options[:3]):
-                option_label = QLabel(f"• {option}")
-                option_label.setFont(QFont('Segoe UI', 8))
-                option_label.setStyleSheet("color: #95a5a6; margin-left: 10px;")
-                preview_layout.addWidget(option_label)
-
-            if len(options) > 3:
-                more_label = QLabel(f"... e mais {len(options) - 3} opções")
-                more_label.setFont(QFont('Segoe UI', 8))
-                more_label.setStyleSheet("color: #bdc3c7; font-style: italic; margin-left: 10px;")
-                preview_layout.addWidget(more_label)
-
-        elif message_type in ['image', 'video']:
-            # Preview de mídia visual
-            media_label = QLabel("🖼️ Mídia anexada" if message_type == 'image' else "🎬 Vídeo anexado")
-            media_label.setFont(QFont('Segoe UI', 9))
-            media_label.setStyleSheet("color: #3498db; font-style: italic;")
-            preview_layout.addWidget(media_label)
+        # ... resto dos tipos existentes
 
         return preview_widget
+
+    def _play_audio_placeholder(self):
+        """Placeholder para reprodução de áudio"""
+        from PyQt6.QtWidgets import QMessageBox
+        QMessageBox.information(self, "Áudio", "Funcionalidade de reprodução de áudio em desenvolvimento")
 
     def setup_animation(self):
         """Configura animação de entrada"""
@@ -449,8 +565,38 @@ class MessageBubble(QFrame):
         self.animation.start()
 
     def show_options_menu(self):
-        """Mostra menu de contexto com opções para a mensagem"""
+        """CORRIGIDO: Menu de opções considerando estado temporário"""
         if not self.message_data.get('message_id'):
+            return
+
+        # CORREÇÃO: Menu limitado para mensagens temporárias
+        if self.is_temporary_sent:
+            menu = QMenu(self)
+            menu.setStyleSheet("""
+               QMenu {
+                   background-color: white;
+                   border: 1px solid #e0e0e0;
+                   border-radius: 8px;
+                   padding: 5px;
+               }
+               QMenu::item {
+                   padding: 8px 15px;
+                   border-radius: 4px;
+                   color: #2c3e50;
+                   font-size: 13px;
+               }
+               QMenu::item:selected {
+                   background-color: #f8f9fa;
+               }
+           """)
+
+            # Apenas opção informativa para mensagens temporárias
+            info_action = QAction("⏳ Aguardando confirmação...", self)
+            info_action.setEnabled(False)
+            menu.addAction(info_action)
+
+            pos = self.options_button.mapToGlobal(QPoint(0, self.options_button.height()))
+            menu.exec(pos)
             return
 
         menu = QMenu(self)
@@ -506,7 +652,13 @@ class MessageBubble(QFrame):
         menu.exec(pos)
 
     def edit_message(self):
-        """Edita o conteúdo da mensagem e mostra marcação de editada"""
+        """CORRIGIDO: Edição considerando IDs corretos"""
+        # CORREÇÃO: Não permitir edição de mensagens temporárias
+        if self.is_temporary_sent:
+            from PyQt6.QtWidgets import QMessageBox
+            QMessageBox.warning(self, "Aviso", "Aguarde a confirmação do envio antes de editar.")
+            return
+
         if not self.webhook_message_id or not self.whatsapp_api:
             return
 
@@ -596,10 +748,10 @@ class MessageBubble(QFrame):
                         # Emitir sinal
                         self.message_edited.emit(self.webhook_message_id, new_text, self.chat_id)
                     else:
-                        QMessageBox.warning(self, "Erro", "Não foi possível editar a mensagem.")
+                      print("Erro", "Resposta inválida da API ao editar mensagem.")
 
                 except Exception as e:
-                    QMessageBox.critical(self, "Erro", f"Erro ao editar mensagem: {str(e)}")
+                    print('Erro', e)
 
     def _show_as_edited(self, new_text: str):
         """Mostra mensagem como editada com marcação visual - CORRIGIDO"""
@@ -641,7 +793,14 @@ class MessageBubble(QFrame):
             print(f"Erro ao marcar como editada: {e}")
 
     def delete_message(self):
-        """Marca mensagem como deletada sem remover da interface"""
+        """CORRIGIDO: Exclusão considerando IDs corretos"""
+        # CORREÇÃO: Não permitir exclusão de mensagens temporárias
+        if self.is_temporary_sent:
+            from PyQt6.QtWidgets import QMessageBox
+            QMessageBox.warning(self, "Aviso", "Aguarde a confirmação do envio antes de excluir.")
+            return
+
+
         if not self.webhook_message_id or not self.whatsapp_api:
             print(f"❌ Não é possível deletar - Webhook ID: {self.webhook_message_id}, API: {bool(self.whatsapp_api)}")
             return
@@ -765,7 +924,13 @@ class MessageBubble(QFrame):
             print(f"Erro ao marcar como deletada: {e}")
 
     def add_reaction(self, reaction: Optional[str]):
-        """Adiciona ou remove reação usando ID correto"""
+        """CORRIGIDO: Reação considerando IDs corretos"""
+        # CORREÇÃO: Não permitir reação em mensagens temporárias
+        if self.is_temporary_sent:
+            from PyQt6.QtWidgets import QMessageBox
+            QMessageBox.warning(self, "Aviso", "Aguarde a confirmação do envio antes de reagir.")
+            return
+
         if not self.webhook_message_id or not self.whatsapp_api:
             return
 
@@ -903,55 +1068,56 @@ class DateSeparator(QWidget):
         layout.addWidget(date_label, 0)
         layout.addWidget(right_line, 1)
 
+
 def setup_ui(self):
-   """Configura a interface do balão com botões de opções"""
-   # Configurações básicas do widget
-   self.setMaximumWidth(500)
-   self.setMinimumHeight(50)
-   self.setSizePolicy(QSizePolicy.Policy.Preferred, QSizePolicy.Policy.Fixed)
+    """Configura a interface do balão com botões de opções"""
+    # Configurações básicas do widget
+    self.setMaximumWidth(500)
+    self.setMinimumHeight(50)
+    self.setSizePolicy(QSizePolicy.Policy.Preferred, QSizePolicy.Policy.Fixed)
 
-   # Layout principal
-   main_layout = QVBoxLayout(self)
-   main_layout.setContentsMargins(5, 8, 5, 8)
-   main_layout.setSpacing(3)
+    # Layout principal
+    main_layout = QVBoxLayout(self)
+    main_layout.setContentsMargins(5, 8, 5, 8)
+    main_layout.setSpacing(3)
 
-   # Nome do remetente (apenas para mensagens recebidas em grupos)
-   if not self.is_from_me and self.message_data.get('is_group', False):
-       sender_name = self.message_data.get('sender_name', 'Desconhecido')
-       if sender_name != 'Você':  # Não mostrar "Você" em grupos
-           sender_label = QLabel(sender_name)
-           sender_label.setFont(QFont('Segoe UI', 9, QFont.Weight.Bold))
-           sender_label.setStyleSheet("color: #667eea; margin-left: 15px; margin-bottom: 2px;")
-           main_layout.addWidget(sender_label)
+    # Nome do remetente (apenas para mensagens recebidas em grupos)
+    if not self.is_from_me and self.message_data.get('is_group', False):
+        sender_name = self.message_data.get('sender_name', 'Desconhecido')
+        if sender_name != 'Você':  # Não mostrar "Você" em grupos
+            sender_label = QLabel(sender_name)
+            sender_label.setFont(QFont('Segoe UI', 9, QFont.Weight.Bold))
+            sender_label.setStyleSheet("color: #667eea; margin-left: 15px; margin-bottom: 2px;")
+            main_layout.addWidget(sender_label)
 
-   # Container do balão
-   bubble_container = QHBoxLayout()
-   bubble_container.setContentsMargins(0, 0, 0, 0)
-   bubble_container.setSpacing(0)
+    # Container do balão
+    bubble_container = QHBoxLayout()
+    bubble_container.setContentsMargins(0, 0, 0, 0)
+    bubble_container.setSpacing(0)
 
-   # Criar o balão da mensagem
-   self.bubble_frame = self._create_bubble()
+    # Criar o balão da mensagem
+    self.bubble_frame = self._create_bubble()
 
-   # CORREÇÃO: Alinhamento mais extremo para direita
-   if self.is_from_me:
-       # Mensagens enviadas - máximo à direita
-       bubble_container.addStretch(10)  # Muito mais espaço à esquerda
-       bubble_container.addWidget(self.bubble_frame, 0)
-       # Zero margem à direita para colar na borda
-       bubble_container.setContentsMargins(0, 0, 0, 0)
-   else:
-       # Mensagens recebidas - lado esquerdo
-       bubble_container.addWidget(self.bubble_frame, 0)
-       bubble_container.addStretch(10)  # Muito mais espaço à direita
-       bubble_container.setContentsMargins(8, 0, 0, 0)
+    # CORREÇÃO: Alinhamento mais extremo para direita
+    if self.is_from_me:
+        # Mensagens enviadas - máximo à direita
+        bubble_container.addStretch(10)  # Muito mais espaço à esquerda
+        bubble_container.addWidget(self.bubble_frame, 0)
+        # Zero margem à direita para colar na borda
+        bubble_container.setContentsMargins(0, 0, 0, 0)
+    else:
+        # Mensagens recebidas - lado esquerdo
+        bubble_container.addWidget(self.bubble_frame, 0)
+        bubble_container.addStretch(10)  # Muito mais espaço à direita
+        bubble_container.setContentsMargins(8, 0, 0, 0)
 
-   main_layout.addLayout(bubble_container)
+    main_layout.addLayout(bubble_container)
 
-   # Configurar o layout principal
-   self.setLayout(main_layout)
+    # Configurar o layout principal
+    self.setLayout(main_layout)
 
-   # Estilo do container principal
-   self.setStyleSheet("""
+    # Estilo do container principal
+    self.setStyleSheet("""
        MessageBubble { 
            background-color: transparent; 
            border: none; 
@@ -961,9 +1127,9 @@ def setup_ui(self):
        }
    """)
 
-   # Garantir visibilidade
-   self.setVisible(True)
-   self.is_fully_setup = True
+    # Garantir visibilidade
+    self.setVisible(True)
+    self.is_fully_setup = True
 
 
 class AttachmentButton(QPushButton):

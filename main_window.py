@@ -577,9 +577,28 @@ class WhatsAppChatMainWindow(QMainWindow):
         # Carregar dados
         self.load_initial_data()
         self.incremental_updater.start()
-
+        self.cleanup_timer = QTimer()
+        self.cleanup_timer.timeout.connect(self._cleanup_pending_messages)
+        self.cleanup_timer.start(1000)  # Limpar a cada 10 segundos
         # Verificação inicial WhatsApp
         QTimer.singleShot(2000, self.message_sender.check_connection)
+
+    def _cleanup_pending_messages(self):
+        """NOVO: Remove mensagens temporárias antigas (mais de 30 segundos)"""
+        if not hasattr(self, '_pending_sent_messages'):
+            return
+
+        current_time = int(datetime.now().timestamp())
+        expired_keys = []
+
+        for temp_id, temp_msg in self._pending_sent_messages.items():
+            temp_timestamp = temp_msg.get('timestamp', 0)
+            if current_time - temp_timestamp > 30:  # 30 segundos
+                expired_keys.append(temp_id)
+
+        for key in expired_keys:
+            del self._pending_sent_messages[key]
+            print(f"🗑️ Mensagem temporária expirada removida: {key}")
 
     def setup_database_connections(self):
         """Conecta sinais do banco"""
@@ -709,37 +728,29 @@ class WhatsAppChatMainWindow(QMainWindow):
             self.ui.attach_btn.setText("📎")
 
     def on_whatsapp_message_sent(self, message_data: Dict):
-        """Mensagem WhatsApp enviada - CORRIGIDO sem alterar ícones"""
+        """CORRIGIDO: Mensagem WhatsApp enviada - NÃO criar temporária"""
         print(f"✅ Mensagem WhatsApp enviada: {message_data.get('content', '')[:50]}")
 
         # CORREÇÃO: Reabilitar botões com ícones originais
         self.ui.send_btn.setEnabled(True)
-        self.ui.send_btn.setText("➤")  # Ícone original
+        self.ui.send_btn.setText("📤")
         self.ui.attach_btn.setEnabled(True)
-        self.ui.attach_btn.setText("📎")  # Ícone original
+        self.ui.attach_btn.setText("📎")
 
-        # VALIDAR E CORRIGIR IDs antes de adicionar à interface
-        corrections = validate_message_ids(message_data)
+        # NOVO: Apenas registrar que foi enviada - NÃO criar widget temporário
+        real_id = message_data.get('webhook_message_id', message_data.get('message_id', ''))
+        content = message_data.get('content', '')
 
-        if not (corrections['webhook_id_ok'] and corrections['chat_id_ok']):
-            print(f"❌ Não foi possível corrigir IDs da mensagem enviada")
-            return
+        print(f"📤 Mensagem enviada registrada - ID: {real_id}, Conteúdo: {content[:30]}...")
 
-        # Adicionar à interface
-        try:
-            message_widget = MessageRenderer.create_message_widget(
-                message_data,
-                whatsapp_api=self.message_sender.whatsapp_api
-            )
-            if message_widget:
-                self.add_single_message_to_chat(message_widget, message_data, is_sent=True)
+        # FORÇAR busca de novas mensagens após 2 segundos
+        QTimer.singleShot(2000, self._force_refresh_after_send)
 
-                print(f"✅ Mensagem enviada adicionada à interface:")
-                print(f"   Webhook ID: {message_data.get('webhook_message_id', '')}")
-                print(f"   Chat ID: {message_data.get('chat_id', '')}")
-
-        except Exception as e:
-            print(f"Erro ao adicionar mensagem à UI: {e}")
+    def _force_refresh_after_send(self):
+        """NOVO: Força refresh após envio para pegar mensagem do banco"""
+        if self.current_contact and self.incremental_updater.isRunning():
+            print("🔄 Forçando refresh após envio...")
+            self.incremental_updater.check_for_new_messages_incremental()
 
     def on_whatsapp_message_failed(self, contact_id: str, error_message: str):
         """Falha no envio WhatsApp - CORRIGIDO"""
@@ -965,17 +976,25 @@ class WhatsAppChatMainWindow(QMainWindow):
         print("✅ Lista atualizada com elevação de seleção")
 
     def on_contact_selected(self, contact_id: str):
-        """Contato selecionado com feedback visual"""
+        """CORRIGIDO: Seleção com isolamento total"""
         if contact_id not in self.loaded_contacts:
             return
 
         contact_data = self.loaded_contacts[contact_id]
-        print(f"👤 Selecionado: {contact_data['contact_name']} (com elevação)")
+        print(f"👤 ISOLAMENTO: Selecionado {contact_data['contact_name']} (ID: {contact_id[:15]})")
+
+        # CORREÇÃO: Limpar cache de outros contatos para evitar interferência
+        current_chat_cache = self.db_interface._loaded_messages_cache.get(contact_id, {})
+
+        # Manter apenas o cache do contato atual
+        self.db_interface._loaded_messages_cache.clear()
+        if current_chat_cache:
+            self.db_interface._loaded_messages_cache[contact_id] = current_chat_cache
 
         self.current_contact = contact_id
         self.current_contact_data = contact_data
 
-        # Configurar updater
+        # Configurar updater APENAS para este contato
         self.incremental_updater.set_current_contact(contact_id)
 
         # Atualizar UI
@@ -983,12 +1002,9 @@ class WhatsAppChatMainWindow(QMainWindow):
         self.ui.update_active_contact(contact_data)
         self.clear_messages_display()
 
-        # Habilitar controles
-        self.ui.message_input.setEnabled(True)
-        self.ui.send_btn.setEnabled(True)
-        self.ui.attach_btn.setEnabled(True)
+        print(f"🔒 ISOLAMENTO ATIVO: Apenas mensagens de {contact_id[:15]} serão exibidas")
 
-        # Carregar mensagens
+        # Carregar mensagens com isolamento
         self.is_loading_messages = True
         self.messages_loaded_count = 0
 
@@ -1023,6 +1039,7 @@ class WhatsAppChatMainWindow(QMainWindow):
                 date_str = message_data.get('date_str', '')
                 if date_str:
                     formatted_date = MessageRenderer.format_date_separator(date_str)
+                    date_separator = MessageRenderer.create_date_separator(formatted_date)
                     date_separator = MessageRenderer.create_date_separator(formatted_date)
                     self.add_widget_to_chat_initial(date_separator)
 
@@ -1061,7 +1078,7 @@ class WhatsAppChatMainWindow(QMainWindow):
         print(f"✅ {self.messages_loaded_count} mensagens renderizadas")
 
     def on_new_messages_received_incremental(self, new_messages: List[Dict]):
-        """Novas mensagens incrementais - com suporte a reações"""
+        """SIMPLIFICADO: Processar apenas novas mensagens normais"""
         if not new_messages:
             return
 
@@ -1069,22 +1086,7 @@ class WhatsAppChatMainWindow(QMainWindow):
 
         for message_data in new_messages:
             try:
-                # Verificar se é uma reação a uma mensagem existente
-                if self._is_reaction_update(message_data):
-                    self._handle_reaction_update(message_data)
-                    continue
-
-                # Verificar se é uma edição de mensagem existente
-                if self._is_message_edit(message_data):
-                    self._handle_message_edit(message_data)
-                    continue
-
-                # Verificar se é uma exclusão de mensagem existente
-                if self._is_message_deletion(message_data):
-                    self._handle_message_deletion(message_data)
-                    continue
-
-                # Mensagem nova normal
+                # SIMPLES: Criar widget para todas as mensagens novas
                 message_widget = MessageRenderer.create_message_widget(
                     message_data,
                     whatsapp_api=self.message_sender.whatsapp_api
@@ -1101,7 +1103,131 @@ class WhatsAppChatMainWindow(QMainWindow):
         return (
                 message_data.get('message_type') == 'reaction' or
                 'reaction' in message_data and message_data.get('target_message_id')
-        )
+         )
+
+    def _find_temporary_message_widget(self, temp_id: str) -> Optional['MessageBubble']:
+        """NOVO: Encontra widget de mensagem temporária pelo temp_id"""
+        try:
+            for i in range(self.ui.messages_layout.count()):
+                item = self.ui.messages_layout.itemAt(i)
+                if item and item.widget():
+                    widget = item.widget()
+                    if isinstance(widget, MessageBubble):
+                        # Verificar se é o widget temporário
+                        if (hasattr(widget, 'is_temporary_sent') and
+                                widget.is_temporary_sent and
+                                hasattr(widget, 'temp_id') and
+                                widget.temp_id == temp_id):
+                            return widget
+            return None
+        except Exception as e:
+            print(f"Erro ao buscar widget temporário: {e}")
+            return None
+
+    def _replace_temporary_with_definitive(self, message_data: Dict):
+        """NOVO: Substitui mensagem temporária pela definitiva do banco"""
+        try:
+            if not hasattr(self, '_pending_sent_messages'):
+                return
+
+            real_id = message_data.get('messageId') or message_data.get('webhook_message_id') or message_data.get(
+                'message_id')
+            message_content = message_data.get('msgContent', {}).get('conversation', '')
+            message_timestamp = message_data.get('moment', 0)
+
+            # Encontrar mensagem temporária correspondente
+            temp_id_to_replace = None
+            temp_msg_data = None
+
+            for temp_id, temp_msg in self._pending_sent_messages.items():
+                temp_content = temp_msg.get('content', '')
+                temp_timestamp = temp_msg.get('timestamp', 0)
+
+                if (temp_content == message_content and
+                        abs(temp_timestamp - message_timestamp) <= 30):
+                    temp_id_to_replace = temp_id
+                    temp_msg_data = temp_msg
+                    break
+
+            if not temp_id_to_replace:
+                print(f"⚠️ Mensagem temporária não encontrada para: {real_id}")
+                return
+
+            # Encontrar widget temporário na interface
+            temp_widget = self._find_temporary_message_widget(temp_id_to_replace)
+            if not temp_widget:
+                print(f"⚠️ Widget temporário não encontrado: {temp_id_to_replace}")
+                return
+
+            # Processar dados da mensagem definitiva
+            processed_msg = self.db_interface._process_message_for_chat(message_data)
+            if not processed_msg:
+                print(f"⚠️ Erro ao processar mensagem definitiva: {real_id}")
+                return
+
+            # CRÍTICO: Atualizar widget temporário com dados definitivos
+            temp_widget.message_data.update(processed_msg)
+            temp_widget.webhook_message_id = real_id
+            temp_widget.message_data['webhook_message_id'] = real_id
+            temp_widget.message_data['message_id'] = real_id
+
+            # Remover flags temporárias
+            temp_widget.is_temporary_sent = False
+            if hasattr(temp_widget, 'temp_id'):
+                delattr(temp_widget, 'temp_id')
+
+            # Adicionar indicador visual de "enviado"
+            temp_widget._mark_as_delivered()
+
+            # Limpar da lista de pendentes
+            del self._pending_sent_messages[temp_id_to_replace]
+
+            print(f"🔄 Mensagem substituída com sucesso:")
+            print(f"   Temp ID removido: {temp_id_to_replace}")
+            print(f"   Real ID confirmado: {real_id}")
+            print(f"   Widget atualizado com dados definitivos")
+
+        except Exception as e:
+            print(f"❌ Erro ao substituir mensagem temporária: {e}")
+
+    def _should_replace_temporary_message(self, message_data: Dict) -> bool:
+        """CORRIGIDO: Verificação mais rigorosa para substituição"""
+        try:
+            # Só processar mensagens enviadas por mim
+            if not message_data.get('fromMe', False):
+                return False
+
+            # Verificar se temos mensagens temporárias pendentes
+            if not hasattr(self, '_pending_sent_messages') or not self._pending_sent_messages:
+                return False
+
+            real_id = message_data.get('messageId') or message_data.get('webhook_message_id')
+            if not real_id:
+                return False
+
+            # NOVO: Verificar por conteúdo E timestamp próximo (janela de 10 segundos)
+            message_content = message_data.get('msgContent', {}).get('conversation', '')
+            message_timestamp = message_data.get('moment', 0)
+
+            for temp_id, temp_msg in list(self._pending_sent_messages.items()):
+                temp_content = temp_msg.get('content', '')
+                temp_timestamp = temp_msg.get('timestamp', 0)
+
+                # Janela de tempo mais restrita (10 segundos)
+                time_diff = abs(temp_timestamp - message_timestamp)
+
+                if (temp_content == message_content and time_diff <= 10):
+                    print(f"🔄 Substituição confirmada:")
+                    print(f"   Temp ID: {temp_id}")
+                    print(f"   Real ID: {real_id}")
+                    print(f"   Diferença tempo: {time_diff}s")
+                    return True
+
+            return False
+
+        except Exception as e:
+            print(f"⚠️ Erro na verificação: {e}")
+            return False
 
     def _is_reaction_update(self, message_data: Dict) -> bool:
         """Verifica se a mensagem é uma atualização de reação"""

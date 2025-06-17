@@ -25,38 +25,30 @@ class ContactItemWidget(QWidget):
         self.contact_id = contact_data['contact_id']
         self.is_elevated = False
         self.is_selected = False
+        # CORREÇÃO: Adicionar flags para controle de imagem
+        self.has_profile_image = False
+        self.profile_pixmap = None
         self.setup_ui()
 
     def setup_ui(self):
         self.setFixedHeight(78)
         self.setCursor(Qt.CursorShape.PointingHandCursor)
 
-        # Layout principal
         layout = QHBoxLayout()
         layout.setContentsMargins(16, 12, 16, 12)
         layout.setSpacing(14)
 
-        # Avatar circular profissional
+        # CORREÇÃO: Avatar com imagem real ou inicial
         self.avatar_label = QLabel()
         self.avatar_label.setFixedSize(52, 52)
         self.avatar_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
 
-        # Cor profissional do avatar
-        avatar_color = self._get_professional_avatar_color(self.contact_data['contact_name'])
-        initial = self.contact_data['contact_name'][0].upper() if self.contact_data['contact_name'] else '?'
-
-        self.avatar_label.setStyleSheet(f"""
-            QLabel {{
-                background: qlineargradient(x1:0, y1:0, x2:1, y2:1,
-                    stop:0 {avatar_color}, stop:1 {self._darken_color(avatar_color)});
-                color: white;
-                border-radius: 26px;
-                font-weight: 600;
-                font-size: 18px;
-                font-family: 'Segoe UI', sans-serif;
-            }}
-        """)
-        self.avatar_label.setText(initial)
+        # Tentar carregar imagem de perfil
+        profile_pic_url = self.contact_data.get('profile_picture', '')
+        if profile_pic_url and profile_pic_url.startswith('http'):
+            self._load_profile_picture(profile_pic_url)
+        else:
+            self._set_initial_avatar()
 
         # Informações do contato
         info_layout = QVBoxLayout()
@@ -144,6 +136,99 @@ class ContactItemWidget(QWidget):
         # Sombra suave profissional
         self._apply_shadow(False)
 
+    def _load_profile_picture(self, url: str):
+        """CORRIGIDO: Carrega imagem de perfil real e mantém fixa"""
+        try:
+            import requests
+            from PyQt6.QtGui import QPixmap
+            from PyQt6.QtCore import QThread, pyqtSignal
+
+            # Thread para carregar imagem
+            class ImageLoader(QThread):
+                image_loaded = pyqtSignal(bytes)
+
+                def __init__(self, url):
+                    super().__init__()
+                    self.url = url
+
+                def run(self):
+                    try:
+                        response = requests.get(self.url, timeout=5)
+                        if response.status_code == 200:
+                            self.image_loaded.emit(response.content)
+                    except Exception as e:
+                        print(f"Erro ao carregar imagem: {e}")
+
+            def on_image_loaded(image_data):
+                try:
+                    pixmap = QPixmap()
+                    pixmap.loadFromData(image_data)
+
+                    if not pixmap.isNull():
+                        # Redimensionar e aplicar máscara circular
+                        scaled_pixmap = pixmap.scaled(52, 52, Qt.AspectRatioMode.KeepAspectRatioByExpanding,
+                                                      Qt.TransformationMode.SmoothTransformation)
+
+                        # Criar máscara circular
+                        from PyQt6.QtGui import QPainter, QBrush
+                        circular_pixmap = QPixmap(52, 52)
+                        circular_pixmap.fill(Qt.GlobalColor.transparent)
+
+                        painter = QPainter(circular_pixmap)
+                        painter.setRenderHint(QPainter.RenderHint.Antialiasing)
+                        painter.setBrush(QBrush(scaled_pixmap))
+                        painter.setPen(Qt.PenStyle.NoPen)
+                        painter.drawEllipse(0, 0, 52, 52)
+                        painter.end()
+
+                        # CORREÇÃO: Armazenar pixmap para não perder
+                        self.profile_pixmap = circular_pixmap
+                        self.has_profile_image = True
+
+                        self.avatar_label.setPixmap(circular_pixmap)
+                        self.avatar_label.setText("")  # Limpar texto
+                        self.avatar_label.setStyleSheet("""
+                            QLabel {
+                                border: 2px solid #e2e8f0;
+                                border-radius: 26px;
+                                background-color: white;
+                            }
+                        """)
+                    else:
+                        self._set_initial_avatar()
+                except Exception as e:
+                    print(f"Erro ao processar imagem: {e}")
+                    self._set_initial_avatar()
+
+            self.image_loader = ImageLoader(url)
+            self.image_loader.image_loaded.connect(on_image_loaded)
+            self.image_loader.start()
+
+        except Exception as e:
+            print(f"Erro ao configurar carregamento: {e}")
+            self._set_initial_avatar()
+
+    def _set_initial_avatar(self):
+        """CORRIGIDO: Define avatar com inicial mantendo flag de imagem"""
+        # CORREÇÃO: Só definir inicial se não tiver imagem carregada
+        if not hasattr(self, 'has_profile_image') or not self.has_profile_image:
+            avatar_color = self._get_professional_avatar_color(self.contact_data['contact_name'])
+            initial = self.contact_data['contact_name'][0].upper() if self.contact_data['contact_name'] else '?'
+
+            self.avatar_label.setStyleSheet(f"""
+                QLabel {{
+                    background: qlineargradient(x1:0, y1:0, x2:1, y2:1,
+                        stop:0 {avatar_color}, stop:1 {self._darken_color(avatar_color)});
+                    color: white;
+                    border-radius: 26px;
+                    font-weight: 600;
+                    font-size: 18px;
+                    font-family: 'Segoe UI', sans-serif;
+                }}
+            """)
+            self.avatar_label.setText(initial)
+            self.avatar_label.setPixmap(QPixmap())  # Limpar pixmap
+
     def _get_professional_avatar_color(self, name: str) -> str:
         """Retorna cores profissionais e suaves"""
         colors = [
@@ -200,7 +285,7 @@ class ContactItemWidget(QWidget):
         self.setGraphicsEffect(shadow)
 
     def set_selected(self, selected: bool):
-        """Define se o item está selecionado com elevação especial"""
+        """CORRIGIDO: Define se o item está selecionado preservando imagem"""
         self.is_selected = selected
 
         if selected:
@@ -215,6 +300,10 @@ class ContactItemWidget(QWidget):
                 }
             """)
             self._apply_shadow(False, True)
+
+            # CORREÇÃO: Preservar imagem de perfil quando selecionado
+            if self.has_profile_image and self.profile_pixmap:
+                self.avatar_label.setPixmap(self.profile_pixmap)
         else:
             # Voltar ao estilo normal
             self.setStyleSheet("""
@@ -231,29 +320,47 @@ class ContactItemWidget(QWidget):
             """)
             self._apply_shadow(self.is_elevated, False)
 
+            # CORREÇÃO: Preservar imagem de perfil quando não selecionado
+            if self.has_profile_image and self.profile_pixmap:
+                self.avatar_label.setPixmap(self.profile_pixmap)
+
     def enterEvent(self, event):
-        """Elevação suave ao entrar com mouse"""
+        """CORRIGIDO: Elevação suave preservando imagem"""
         if not self.is_elevated and not self.is_selected:
             self.is_elevated = True
             self._apply_shadow(True, False)
+
+        # CORREÇÃO: Preservar imagem no hover
+        if self.has_profile_image and self.profile_pixmap:
+            self.avatar_label.setPixmap(self.profile_pixmap)
+
         super().enterEvent(event)
 
     def leaveEvent(self, event):
-        """Remove elevação ao sair com mouse"""
+        """CORRIGIDO: Remove elevação preservando imagem"""
         if self.is_elevated and not self.is_selected:
             self.is_elevated = False
             self._apply_shadow(False, False)
+
+        # CORREÇÃO: Preservar imagem ao sair do hover
+        if self.has_profile_image and self.profile_pixmap:
+            self.avatar_label.setPixmap(self.profile_pixmap)
+
         super().leaveEvent(event)
 
     def mousePressEvent(self, event):
-        """Efeito de clique com elevação extra"""
+        """CORRIGIDO: Efeito de clique preservando imagem"""
         if event.button() == Qt.MouseButton.LeftButton:
             # Elevação extra no clique
             shadow = QGraphicsDropShadowEffect()
             shadow.setBlurRadius(25)
-            shadow.setColor(QColor(99, 102, 241, 50))  # Cor azul com transparência
+            shadow.setColor(QColor(99, 102, 241, 50))
             shadow.setOffset(0, 8)
             self.setGraphicsEffect(shadow)
+
+            # CORREÇÃO: Preservar imagem no clique
+            if self.has_profile_image and self.profile_pixmap:
+                self.avatar_label.setPixmap(self.profile_pixmap)
 
             # Emitir sinal de clique
             self.clicked.emit(self.contact_id)
