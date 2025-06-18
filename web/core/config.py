@@ -1,31 +1,58 @@
-from pydantic import BaseSettings
-from typing import List, Union
-import secrets
+from pydantic_settings import BaseSettings
+from typing import Optional, List
+import os
 
 
 class Settings(BaseSettings):
-    PROJECT_NAME: str = "WhatsApp Atendimento"
-    VERSION: str = "2.0.0"
-    API_V1_STR: str = "/api/v1"
-
-    SECRET_KEY: str = secrets.token_urlsafe(32)
-    ACCESS_TOKEN_EXPIRE_MINUTES: int = 60 * 24 * 8  # 8 days
+    # App
+    app_name: str = "Chat Web API"
+    version: str = "1.0.0"
+    debug: bool = False
 
     # Database
-    DATABASE_URL: str = "postgresql+asyncpg://user:password@localhost/whatsapp_db"
+    database_url: str
+    database_echo: bool = False
 
-    # Redis
-    REDIS_URL: str = "redis://localhost:6379"
+    # Security
+    secret_key: str
+    algorithm: str = "HS256"
+    access_token_expire_minutes: int = 30
+    refresh_token_expire_days: int = 7
 
     # CORS
-    BACKEND_CORS_ORIGINS: List[str] = ["http://localhost:3000", "http://localhost:8080"]
+    allowed_origins: List[str] = ["*"]
+    allowed_methods: List[str] = ["*"]
+    allowed_headers: List[str] = ["*"]
+
+    # Redis (para cache e sessões)
+    redis_url: Optional[str] = None
 
     # WhatsApp API
-    WHATSAPP_API_URL: str = "https://api.whatsapp.com"
-    WHATSAPP_TOKEN: str = ""
+    whatsapp_token: Optional[str] = None
+    whatsapp_phone_number_id: Optional[str] = None
+    whatsapp_verify_token: Optional[str] = None
+
+    # Email
+    smtp_server: Optional[str] = None
+    smtp_port: int = 587
+    smtp_username: Optional[str] = None
+    smtp_password: Optional[str] = None
+
+    # Rate Limiting
+    rate_limit_requests: int = 100
+    rate_limit_window: int = 3600  # 1 hour
+
+    # File Upload
+    max_file_size: int = 10 * 1024 * 1024  # 10MB
+    allowed_file_types: List[str] = [
+        "image/jpeg", "image/png", "image/gif",
+        "application/pdf", "text/plain"
+    ]
 
     class Config:
         env_file = ".env"
+        case_sensitive = False
+        extra = "forbid"  # Evita configurações inválidas
 
 
 settings = Settings()
