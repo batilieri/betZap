@@ -14,7 +14,7 @@ from sqlalchemy.exc import IntegrityError, SQLAlchemyError
 from sqlalchemy import func, desc, and_, or_, text
 
 # Importar modelos atualizados
-from models_updated import (
+from backend.banco.models_updated import (
     WebhookEvent, Chat, Sender, MessageContent, MessageStats, ContactStats, RealTimeStats,
     init_database, create_database_engine, create_session_factory
 )
