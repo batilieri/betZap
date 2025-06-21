@@ -677,7 +677,7 @@ if __name__ == '__main__':
     try:
         instance_id = "3B6XIW-ZTS923-GEAY6V"
         bearer_token = "Q8EOH07SJkXhg4iT6Qmhz1BJdLl8nL9WF"
-        web_hooks = "https://board-trailers-choice-greg.trycloudflare.com/requests?limit=100"
+        web_hooks = "https://dream-photographs-tom-demographic.trycloudflare.com/requests?limit=100"
         monitor = MonitorMidiaWhatsApp(
             webhook_id=web_hooks,
             instance_id=instance_id,
