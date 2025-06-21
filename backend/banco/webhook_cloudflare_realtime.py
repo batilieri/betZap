@@ -13,8 +13,7 @@ from datetime import datetime, timedelta
 from flask import Flask, request, jsonify
 import requests
 import platform
-
-# Importar nosso sistema de banco atualizado
+from sqlalchemy import desc
 from database_manager_updated import WhatsAppDatabaseManager
 
 
@@ -166,14 +165,61 @@ class CloudflareWebhookRealtimeManager:
 
         @self.app.route('/db/messages', methods=['GET'])
         def get_messages():
-            """Retorna mensagens com informações detalhadas"""
-            limit = min(int(request.args.get('limit', 50)), 500)  # Máximo 500
+            """Retorna mensagens com informações detalhadas - INCLUINDO MÍDIAS"""
+            limit = min(int(request.args.get('limit', 50)), 500)
             messages = self.db_manager.get_recent_messages(limit)
+
+            # Contar total de mídias
+            total_medias = sum(len(msg.get('_db_info', {}).get('media_files', [])) for msg in messages)
+
             return jsonify({
                 'total': len(messages),
                 'limit': limit,
+                'total_media_files': total_medias,
                 'messages': messages
             })
+
+        @self.app.route('/db/medias', methods=['GET'])
+        def get_medias():
+            """NOVO: Endpoint específico para listar mídias baixadas"""
+            try:
+                with self.db_manager.get_session() as session:
+                    from backend.banco.models_updated import MessageMedia, WebhookEvent, Sender
+
+                    limit = min(int(request.args.get('limit', 50)), 200)
+                    media_type = request.args.get('type')  # image, video, audio, etc
+
+                    query = session.query(MessageMedia, WebhookEvent, Sender) \
+                        .join(WebhookEvent, MessageMedia.event_id == WebhookEvent.id) \
+                        .outerjoin(Sender, WebhookEvent.id == Sender.event_id) \
+                        .filter(MessageMedia.download_status == 'success')
+
+                    if media_type:
+                        query = query.filter(MessageMedia.media_type == media_type)
+
+                    results = query.order_by(desc(MessageMedia.created_at)).limit(limit).all()
+
+                    medias = []
+                    for media, event, sender in results:
+                        medias.append({
+                            'media_id': media.id,
+                            'path': media.media_path,
+                            'type': media.media_type,
+                            'mimetype': media.mimetype,
+                            'file_size': media.file_size,
+                            'message_id': event.message_id,
+                            'sender_name': sender.push_name if sender else 'Unknown',
+                            'downloaded_at': media.created_at.isoformat()
+                        })
+
+                    return jsonify({
+                        'total': len(medias),
+                        'media_type_filter': media_type,
+                        'medias': medias
+                    })
+
+            except Exception as e:
+                return jsonify({'error': str(e)}), 500
 
         @self.app.route('/db/stats/daily', methods=['GET'])
         def get_daily_stats():

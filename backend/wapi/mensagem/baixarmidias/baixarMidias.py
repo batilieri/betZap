@@ -15,8 +15,11 @@ from pathlib import Path
 from typing import Dict, List, Optional, Tuple
 from urllib.parse import urlparse
 
+from backend.banco.database_manager_updated import WhatsAppDatabaseManager
+from backend.banco.models_updated import WebhookEvent
 
-class WhatsAppMediaManager:
+
+class BaixarMidias:
     def __init__(self, webhook_id: str, instance_id: str, bearer_token: str, db_path: str = None):
         self.webhook_id = webhook_id
         self.instance_id = instance_id
@@ -27,11 +30,18 @@ class WhatsAppMediaManager:
         self.base_url = "https://api.w-api.app/v1"
 
         # Configurar banco de dados
-        self.db_path = db_path or "backend/banco/whatsapp_webhook_realtime.db"
-        self._init_database()
+        if db_path:
+            self.db_path = db_path
+        else:
+            # Partir do diretório do script atual
+            script_dir = Path(__file__).parent  # .../baixarmidias/
+            backend_dir = script_dir.parent.parent.parent  # Voltar para .../backend/
+            self.db_path = str(backend_dir / "banco" / "whatsapp_webhook_realtime.db")
 
-        # Criar estrutura de pastas
-        self.pasta_downloads = Path("downloads_whatsapp")
+        self._init_database()
+        phafNow = Path(__file__).parent  # .../baixarmidias/
+        phafMidias = phafNow.parent.parent.parent.parent  # Voltar para .../backend/
+        self.pasta_downloads = Path(phafMidias / "midias")
         self.pasta_downloads.mkdir(exist_ok=True)
 
         self.pastas_midia = {
@@ -101,7 +111,7 @@ class WhatsAppMediaManager:
             print(f"❌ Erro ao inicializar banco: {e}")
 
     def salvar_midia_no_banco(self, message_data: Dict, info_midia: Dict, file_path: str = None) -> bool:
-        """Salva informações da mídia no banco de dados"""
+        """Salva informações da mídia no banco de dados - COM INTEGRAÇÃO"""
         try:
             with sqlite3.connect(self.db_path) as conn:
                 cursor = conn.cursor()
@@ -116,7 +126,7 @@ class WhatsAppMediaManager:
                 if moment:
                     message_timestamp = datetime.fromtimestamp(moment)
 
-                # Preparar dados para inserção
+                # Preparar dados para inserção na tabela whatsapp_midias
                 dados = (
                     message_id,
                     sender.get('pushName', 'Sem nome'),
@@ -134,7 +144,7 @@ class WhatsAppMediaManager:
                     info_midia.get('height'),
                     info_midia.get('seconds'),
                     info_midia.get('ptt', False),
-                    'success' if file_path else 'failed',
+                    'success' if file_path else 'pending',
                     datetime.now() if file_path else None,
                     message_timestamp,
                     info_midia.get('mediaKey'),
@@ -145,20 +155,41 @@ class WhatsAppMediaManager:
                 )
 
                 cursor.execute('''
-                   INSERT OR REPLACE INTO whatsapp_midias (
-                       message_id, sender_name, sender_id, chat_id, is_group, from_me,
-                       media_type, mimetype, file_name, file_path, file_size, caption,
-                       width, height, duration_seconds, is_ptt, download_status,
-                       download_timestamp, message_timestamp, media_key, direct_path,
-                       file_sha256, file_enc_sha256, media_key_timestamp
-                   ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-               ''', dados)
+                    INSERT OR REPLACE INTO whatsapp_midias (
+                        message_id, sender_name, sender_id, chat_id, is_group, from_me,
+                        media_type, mimetype, file_name, file_path, file_size, caption,
+                        width, height, duration_seconds, is_ptt, download_status,
+                        download_timestamp, message_timestamp, media_key, direct_path,
+                        file_sha256, file_enc_sha256, media_key_timestamp
+                    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                ''', dados)
 
                 conn.commit()
+
+                # NOVO: Se temos file_path, atualizar vínculo na tabela de relacionamento
+                if file_path:
+                    # Buscar event_id correspondente
+                    cursor.execute('''
+                        SELECT id FROM webhook_events WHERE message_id = ?
+                    ''', (message_id,))
+
+                    row = cursor.fetchone()
+                    if row:
+                        event_id = row[0]
+
+                        # Atualizar MessageMedia
+                        cursor.execute('''
+                            UPDATE whatsapp_message_medias 
+                            SET media_path = ?, download_status = 'success'
+                            WHERE event_id = ? AND media_type = ? AND download_status = 'pending'
+                        ''', (file_path, event_id, info_midia['type']))
+
+                        conn.commit()
+
                 return True
 
         except Exception as e:
-            print(f"❌ Erro ao salvar no banco: {e}")
+            print(f"❌ Erro ao salvar mídia integrada: {e}")
             return False
 
     def buscar_midias_pendentes(self) -> List[Dict]:
@@ -337,7 +368,6 @@ class WhatsAppMediaManager:
             'directPath': info_midia['directPath'],
             'type': info_midia['type'],
             'mimetype': info_midia['mimetype']
-            # NÃO incluir fileEncSha256, fileSha256 no payload - apenas para validação local
         }
 
         try:
@@ -479,6 +509,10 @@ class WhatsAppMediaManager:
                     caminho_temp.rename(caminho_arquivo)
 
                     print(f"✅ {info_midia['type'].title()} salvo: {caminho_arquivo}")
+
+                    # NOVO: Atualizar vínculo na tabela de relacionamento
+                    self._atualizar_vinculo_midia(message_id, info_midia['type'], str(caminho_arquivo))
+
                     return str(caminho_arquivo)
 
                 except Exception as e:
@@ -498,6 +532,26 @@ class WhatsAppMediaManager:
         except Exception as e:
             print(f"❌ Erro na descriptografia: {e}")
             return None
+
+    def _atualizar_vinculo_midia(self, message_id: str, media_type: str, file_path: str):
+        """Atualiza vínculo entre mensagem e mídia após download"""
+        try:
+            # Importar o database manager atualizado
+            from backend.banco.database_manager_updated import WhatsAppDatabaseManager
+            from backend.banco.models_updated import WebhookEvent
+
+            db_manager = WhatsAppDatabaseManager(self.db_path)
+
+            # Buscar event_id pelo message_id
+            with db_manager.get_session() as session:
+                event = session.query(WebhookEvent).filter_by(message_id=message_id).first()
+
+                if event:
+                    db_manager.update_media_path(event.id, media_type, file_path)
+                    print(f"✅ Vínculo mídia atualizado: {media_type} -> {file_path}")
+
+        except Exception as e:
+            print(f"❌ Erro ao atualizar vínculo: {e}")
 
     def _validar_magic_numbers(self, data: bytes, mimetype: str) -> bool:
         """Valida magic numbers para verificar integridade do arquivo"""
@@ -775,30 +829,6 @@ class WhatsAppMediaManager:
         except Exception as e:
             print(f"❌ Erro no download via fileLink: {e}")
             return None
-        """Valida se o arquivo final está íntegro"""
-        if not caminho_arquivo.exists():
-            return False
-
-        try:
-            # Verificar se o arquivo não está vazio
-            tamanho = caminho_arquivo.stat().st_size
-            if tamanho == 0:
-                print(f"   ❌ Arquivo vazio")
-                return False
-
-            # Para áudios, tentar abrir com validação básica
-            if info_midia['type'] == 'audio':
-                return self._validar_audio_final(caminho_arquivo, info_midia)
-
-            # Para outros tipos, validar magic numbers
-            with open(caminho_arquivo, 'rb') as f:
-                header = f.read(20)
-
-            return self._validar_magic_numbers(header, info_midia['mimetype'])
-
-        except Exception as e:
-            print(f"   ❌ Erro na validação final: {e}")
-            return False
 
     def _validar_audio_final(self, caminho_arquivo: Path, info_midia: Dict) -> bool:
         """Validação específica para arquivos de áudio"""
@@ -1267,14 +1297,12 @@ if __name__ == '__main__':
         INSTANCE_ID = "3B6XIW-ZTS923-GEAY6V"
         BEARER_TOKEN = "Q8EOH07SJkXhg4iT6Qmhz1BJdLl8nL9WF"
         WEBHOOK_URL = "https://dream-photographs-tom-demographic.trycloudflare.com/requests?limit=100"
-        DB_PATH = "backend/banco/whatsapp_webhook_realtime.db"
 
         # Inicializar manager
-        manager = WhatsAppMediaManager(
+        manager = BaixarMidias(
             webhook_id=WEBHOOK_URL,
             instance_id=INSTANCE_ID,
             bearer_token=BEARER_TOKEN,
-            db_path=DB_PATH
         )
 
         manager.executar()

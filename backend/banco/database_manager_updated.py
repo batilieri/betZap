@@ -236,6 +236,36 @@ class WhatsAppDatabaseManager:
         content.message_type = message_type
         session.add(content)
 
+        # NOVO: Salvar vínculos de mídia após detectar mídias
+        self._save_media_references(session, event_id, msg_content)
+
+    def _save_media_references(self, session, event_id: int, msg_content: Dict):
+        """Salva referências de mídia na tabela de relacionamento"""
+        from backend.banco.models_updated import MessageMedia
+
+        tipos_midia = {
+            'imageMessage': 'image',
+            'videoMessage': 'video',
+            'audioMessage': 'audio',
+            'documentMessage': 'document',
+            'stickerMessage': 'sticker'
+        }
+
+        for tipo_msg, tipo_midia in tipos_midia.items():
+            if tipo_msg in msg_content:
+                midia_data = msg_content[tipo_msg]
+
+                # Criar registro pendente de mídia
+                media_ref = MessageMedia(
+                    event_id=event_id,
+                    media_path='',  # Será preenchido quando download for concluído
+                    media_type=tipo_midia,
+                    mimetype=midia_data.get('mimetype', ''),
+                    file_size=midia_data.get('fileLength'),
+                    download_status='pending'
+                )
+                session.add(media_ref)
+
     def _extract_common_media_fields(self, content: MessageContent, media_data: Dict):
         """Extrai campos comuns de mídia"""
         content.file_sha256 = media_data.get('fileSha256', '')
@@ -413,9 +443,11 @@ class WhatsAppDatabaseManager:
             logger.error(f"❌ Erro ao atualizar stats tempo real: {e}")
 
     def get_recent_messages(self, limit: int = 50) -> List[Dict]:
-        """Retorna mensagens recentes com informações detalhadas"""
+        """Retorna mensagens recentes com informações detalhadas - INCLUINDO MÍDIAS"""
         try:
             with self.get_session() as session:
+                from backend.banco.models_updated import MessageMedia
+
                 query = session.query(WebhookEvent, Sender, MessageContent) \
                     .outerjoin(Sender, WebhookEvent.id == Sender.event_id) \
                     .outerjoin(MessageContent, WebhookEvent.id == MessageContent.event_id) \
@@ -424,12 +456,22 @@ class WhatsAppDatabaseManager:
 
                 results = []
                 for event, sender, content in query:
+                    # Buscar mídias associadas
+                    medias = session.query(MessageMedia).filter_by(event_id=event.id).all()
+
                     message_data = json.loads(event.raw_json)
                     message_data['_db_info'] = {
                         'id': event.id,
                         'message_type': content.message_type if content else 'unknown',
                         'sender_name': sender.push_name if sender else 'Unknown',
-                        'saved_at': event.created_at.isoformat()
+                        'saved_at': event.created_at.isoformat(),
+                        'media_files': [{
+                            'path': media.media_path,
+                            'type': media.media_type,
+                            'mimetype': media.mimetype,
+                            'file_size': media.file_size,
+                            'download_status': media.download_status
+                        } for media in medias if media.media_path]  # Só incluir se tem path
                     }
                     results.append(message_data)
 
@@ -437,6 +479,28 @@ class WhatsAppDatabaseManager:
         except Exception as e:
             logger.error(f"❌ Erro ao buscar mensagens: {e}")
             return []
+
+    def update_media_path(self, event_id: int, media_type: str, file_path: str) -> bool:
+        """Atualiza o caminho da mídia após download bem-sucedido"""
+        try:
+            with self.get_session() as session:
+                from backend.banco.models_updated import MessageMedia
+
+                media_ref = session.query(MessageMedia).filter_by(
+                    event_id=event_id,
+                    media_type=media_type,
+                    download_status='pending'
+                ).first()
+
+                if media_ref:
+                    media_ref.media_path = file_path
+                    media_ref.download_status = 'success'
+                    session.commit()
+                    return True
+                return False
+        except Exception as e:
+            logger.error(f"❌ Erro ao atualizar caminho da mídia: {e}")
+            return False
 
     def get_daily_stats(self, days: int = 7) -> List[Dict]:
         """Retorna estatísticas dos últimos N dias"""

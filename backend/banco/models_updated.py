@@ -34,7 +34,7 @@ class WebhookEvent(Base):
     sender = relationship("Sender", back_populates="event", uselist=False, cascade="all, delete-orphan")
     message_content = relationship("MessageContent", back_populates="event", uselist=False,
                                    cascade="all, delete-orphan")
-
+    message_medias = relationship("MessageMedia", back_populates="event", cascade="all, delete-orphan")
 
 class Chat(Base):
     """Tabela para informações do chat"""
@@ -197,6 +197,23 @@ class RealTimeStats(Base):
     stat_key = Column(String(50), unique=True, index=True)
     stat_value = Column(Integer, default=0)
     last_updated = Column(DateTime, default=datetime.utcnow)
+
+
+class MessageMedia(Base):
+    """Tabela para relacionar mensagens com suas mídias baixadas"""
+    __tablename__ = 'whatsapp_message_medias'
+
+    id = Column(Integer, primary_key=True, autoincrement=True)
+    event_id = Column(Integer, ForeignKey('webhook_events.id', ondelete='CASCADE'), nullable=False, index=True)
+    media_path = Column(Text, nullable=False)
+    media_type = Column(String(50), nullable=False, index=True)  # image, video, audio, document, sticker
+    mimetype = Column(String(50))
+    file_size = Column(Integer)
+    download_status = Column(String(20), default='pending')  # pending, success, failed
+    created_at = Column(DateTime, default=datetime.utcnow)
+
+    # Relacionamento
+    event = relationship("WebhookEvent", back_populates="message_medias")
 
 
 # Configuração do banco
